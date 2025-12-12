@@ -19,16 +19,13 @@ export class PlayerPhysicsBody {
   createBody() {
     const config = PhysicsConfig.player;
 
-    // Create capsule shape using cylinder + 2 spheres
-    const cylinderHeight = config.height - 2 * config.radius;
-    const cylinderShape = new CANNON.Cylinder(
-      config.radius,
-      config.radius,
-      cylinderHeight,
-      8
+    // Box shape matching player dimensions
+    const halfExtents = new CANNON.Vec3(
+      config.width / 2,
+      config.height / 2,
+      config.depth / 2
     );
-
-    const sphereShape = new CANNON.Sphere(config.radius);
+    const boxShape = new CANNON.Box(halfExtents);
 
     const body = new CANNON.Body({
       mass: config.mass,
@@ -36,6 +33,7 @@ export class PlayerPhysicsBody {
       material: this.physicsWorld.playerMaterial,
       linearDamping: config.linearDamping,
       angularDamping: config.angularDamping,
+      fixedRotation: true, // Prevent rotation - stays upright
       collisionFilterGroup: this.physicsWorld.COLLISION_GROUPS.PLAYER,
       collisionFilterMask:
         this.physicsWorld.COLLISION_GROUPS.PLAYER |
@@ -43,13 +41,7 @@ export class PlayerPhysicsBody {
         this.physicsWorld.COLLISION_GROUPS.ENVIRONMENT
     });
 
-    // Add cylinder shape at center
-    body.addShape(cylinderShape);
-
-    // Add sphere caps at top and bottom
-    const halfCylinderHeight = cylinderHeight / 2;
-    body.addShape(sphereShape, new CANNON.Vec3(0, halfCylinderHeight, 0));
-    body.addShape(sphereShape, new CANNON.Vec3(0, -halfCylinderHeight, 0));
+    body.addShape(boxShape);
 
     return body;
   }
@@ -95,6 +87,25 @@ export class PlayerPhysicsBody {
     }
   }
 
+  setVelocity(velocity) {
+    this.body.velocity.set(velocity.x, velocity.y, velocity.z);
+  }
+
+  // Temporarily disable hand collision (used on release to prevent hand pushing player)
+  disableHandCollision() {
+    this.body.collisionFilterMask =
+      this.physicsWorld.COLLISION_GROUPS.PLAYER |
+      this.physicsWorld.COLLISION_GROUPS.ENVIRONMENT;
+  }
+
+  // Re-enable hand collision (called after hand separates from player)
+  enableHandCollision() {
+    this.body.collisionFilterMask =
+      this.physicsWorld.COLLISION_GROUPS.PLAYER |
+      this.physicsWorld.COLLISION_GROUPS.VR_HAND |
+      this.physicsWorld.COLLISION_GROUPS.ENVIRONMENT;
+  }
+
   getVelocity() {
     return new THREE.Vector3(
       this.body.velocity.x,
@@ -122,6 +133,11 @@ export class PlayerPhysicsBody {
       z: this.body.quaternion.z,
       w: this.body.quaternion.w
     };
+  }
+
+  resetRotation() {
+    this.body.quaternion.set(0, 0, 0, 1);
+    this.body.angularVelocity.set(0, 0, 0);
   }
 
   // Sync mesh position/rotation from physics body (for ragdoll)

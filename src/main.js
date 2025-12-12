@@ -11,6 +11,7 @@ import { RemotePlayer } from './player/RemotePlayer.js';
 import { VRHostAvatar } from './player/VRHostAvatar.js';
 import { LobbyUI } from './ui/LobbyUI.js';
 import { PlayerState } from './player/PlayerStateMachine.js';
+import { TestBlock } from './physics/TestBlock.js';
 
 // Game state
 let isHost = false;
@@ -25,6 +26,7 @@ let vrHostAvatar;
 let lobbyUI;
 let clock;
 let gameHUD;
+let testBlocks = [];
 
 // Initialize lobby
 function initLobby() {
@@ -96,8 +98,36 @@ async function startHostGame() {
   // Initialize physics system
   hostManager.initializePhysics();
 
+  // Setup collision handler callback to check if block is held by a specific hand
+  hostManager.collisionHandler.isBlockHeldByHand = (blockId, handIndex) => {
+    return grabSystem.isObjectHeldByHand(blockId, handIndex);
+  };
+
+  // Create test blocks for physics testing
+  const block1 = new TestBlock(
+    hostManager.physicsWorld,
+    scene,
+    'test1',
+    new THREE.Vector3(0.3, 0, 0.3)
+  );
+  const block2 = new TestBlock(
+    hostManager.physicsWorld,
+    scene,
+    'test2',
+    new THREE.Vector3(-0.3, 0, 0.3)
+  );
+  testBlocks.push(block1, block2);
+
+  // Add test blocks to grabbables
+  grabbables.push(block1.mesh, block2.mesh);
+
+  // Register test blocks with host manager
+  hostManager.registerObject('block_test1', block1.mesh.position, block1.mesh.rotation);
+  hostManager.registerObject('block_test2', block2.mesh.position, block2.mesh.rotation);
+
   // Network callbacks for grab (handles both objects and players)
-  grabSystem.onGrab = (objectId, grabbedObject) => {
+  // handIndex: 0 = left, 1 = right
+  grabSystem.onGrab = (objectId, grabbedObject, handIndex) => {
     if (grabbedObject && grabbedObject.userData.isPlayer) {
       const playerId = grabbedObject.userData.playerId;
       hostManager.pickupPlayer(playerId);
@@ -105,33 +135,25 @@ async function startHostGame() {
       if (remotePlayer) {
         remotePlayer.setBeingHeld(true);
       }
+    } else if (grabbedObject && grabbedObject.userData.isTestBlock) {
+      // Handle test block grab
+      const block = testBlocks.find(b => b.mesh === grabbedObject);
+      if (block) {
+        block.setHeld(true);
+      }
+      hostManager.setObjectHeldBy(objectId, 'host');
     } else {
       hostManager.setObjectHeldBy(objectId, 'host');
     }
   };
 
-  grabSystem.onRelease = (objectId, position, releasedObject) => {
+  // handIndex: 0 = left, 1 = right
+  grabSystem.onRelease = (objectId, position, releasedObject, handIndex) => {
     if (releasedObject && releasedObject.userData.isPlayer) {
       const playerId = releasedObject.userData.playerId;
 
-      // Get hand velocity for throw detection
-      let throwVelocity = null;
-      const grabbingHandIndex = grabSystem.getGrabbingHandIndex?.() ?? -1;
-      if (grabbingHandIndex >= 0 && handTrackers[grabbingHandIndex]) {
-        // Calculate velocity from hand tracker
-        const tracker = handTrackers[grabbingHandIndex];
-        if (tracker.hasValidData()) {
-          const wristJoint = tracker.hand?.joints?.['wrist'];
-          if (wristJoint) {
-            // Get hand physics velocity from host manager
-            const handPhysics = hostManager.handPhysics;
-            const handKey = grabbingHandIndex === 0 ? 'left' : 'right';
-            if (handPhysics[handKey]) {
-              throwVelocity = handPhysics[handKey].getVelocity();
-            }
-          }
-        }
-      }
+      // Get object's actual velocity from position tracking for this hand
+      const throwVelocity = grabSystem.getObjectVelocity(handIndex);
 
       hostManager.releasePlayer(throwVelocity);
 
@@ -139,6 +161,30 @@ async function startHostGame() {
       if (remotePlayer) {
         remotePlayer.setBeingHeld(false);
       }
+    } else if (releasedObject && releasedObject.userData.isTestBlock) {
+      // Handle test block release
+      const block = testBlocks.find(b => b.mesh === releasedObject);
+      if (block) {
+        // Get object's actual velocity and angular velocity from tracking for this hand
+        const throwVelocity = grabSystem.getObjectVelocity(handIndex);
+        const angularVelocity = grabSystem.getObjectAngularVelocity(handIndex);
+
+        block.setHeld(false);
+
+        // Temporarily disable hand collision to prevent hand pushing the block
+        hostManager.collisionHandler.scheduleHandCollisionReenable(block);
+
+        // Apply linear velocity directly to physics body
+        if (throwVelocity.length() > 0.1) {
+          block.body.velocity.set(throwVelocity.x, throwVelocity.y, throwVelocity.z);
+        }
+
+        // Apply angular velocity for spin
+        if (angularVelocity.length() > 0.1) {
+          block.body.angularVelocity.set(angularVelocity.x, angularVelocity.y, angularVelocity.z);
+        }
+      }
+      hostManager.releaseObject(objectId);
     } else {
       hostManager.releaseObject(objectId);
       hostManager.updateObjectPosition(objectId, position, { x: 0, y: 0, z: 0 });
@@ -237,20 +283,30 @@ function updateHostGame() {
     });
   }
 
-  // Update object positions for grabbed objects (by VR host)
-  const grabbedId = grabSystem.getGrabbedObjectId();
-  if (grabbedId) {
-    const pos = grabSystem.getGrabbedObjectPosition();
-    if (pos) {
-      if (grabbedId.startsWith('player_')) {
-        hostManager.updateHeldPlayerPosition(pos);
-        const playerId = grabbedId.replace('player_', '');
-        const remotePlayer = remotePlayers.get(playerId);
-        if (remotePlayer) {
-          remotePlayer.setPosition(pos.x, pos.y, pos.z);
+  // Update object positions for all grabbed objects (by VR host - supports two hands)
+  const grabbingHands = grabSystem.getGrabbingHandIndices();
+  for (const handIndex of grabbingHands) {
+    const grabbedId = grabSystem.getGrabbedObjectId(handIndex);
+    if (grabbedId) {
+      const pos = grabSystem.getGrabbedObjectPosition(handIndex);
+      if (pos) {
+        if (grabbedId.startsWith('player_')) {
+          hostManager.updateHeldPlayerPosition(pos);
+          const playerId = grabbedId.replace('player_', '');
+          const remotePlayer = remotePlayers.get(playerId);
+          if (remotePlayer) {
+            remotePlayer.setPosition(pos.x, pos.y, pos.z);
+          }
+        } else if (grabbedId.startsWith('block_')) {
+          // Sync held test block position to physics
+          const block = testBlocks.find(b => b.mesh.userData.networkId === grabbedId);
+          if (block) {
+            block.setPosition(pos.x, pos.y, pos.z);
+          }
+          hostManager.updateObjectPosition(grabbedId, pos, { x: 0, y: 0, z: 0 });
+        } else {
+          hostManager.updateObjectPosition(grabbedId, pos, { x: 0, y: 0, z: 0 });
         }
-      } else {
-        hostManager.updateObjectPosition(grabbedId, pos, { x: 0, y: 0, z: 0 });
       }
     }
   }
@@ -262,6 +318,16 @@ function updateHostGame() {
     const mesh = grabbables.find(g => g.userData.networkId === objId);
     if (mesh && objData.heldBy) {
       mesh.position.set(objData.position.x, objData.position.y, objData.position.z);
+    }
+  });
+
+  // Update test blocks - sync between mesh and physics, handle self-righting
+  testBlocks.forEach(block => {
+    if (block.isHeld) {
+      block.syncToPhysics();   // Mesh drives physics when held
+    } else {
+      block.update(delta);     // Handle self-righting behavior
+      block.syncFromPhysics(); // Physics drives mesh when free
     }
   });
 
@@ -380,6 +446,23 @@ function startClientGame(roomCode) {
     if (player) {
       player.setState(PlayerState.RECOVERING);
     }
+  };
+
+  // Handle local player ragdoll physics updates (when WE are ragdolling)
+  clientManager.onLocalRagdollUpdate = (physicsState) => {
+    if (physicsState.position) {
+      localPlayer.setRagdollState(physicsState);
+    }
+  };
+
+  // Handle local player recovery
+  clientManager.onLocalRecovery = () => {
+    localPlayer.setRecovering();
+  };
+
+  // Handle local player back to walking
+  clientManager.onLocalWalking = () => {
+    localPlayer.setWalking();
   };
 
   // Create game HUD

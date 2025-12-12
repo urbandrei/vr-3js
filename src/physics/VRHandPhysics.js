@@ -7,115 +7,180 @@ export class VRHandPhysics {
     this.physicsWorld = physicsWorld;
     this.handedness = handedness;
 
-    // Position tracking
-    this.previousPosition = new THREE.Vector3();
-    this.currentPosition = new THREE.Vector3();
-    this.hasValidPreviousPosition = false;
-
-    // Velocity tracking with history for smoothing
-    this.velocity = new THREE.Vector3();
-    this.velocityHistory = [];
-    this.maxHistoryLength = PhysicsConfig.hand.velocityHistoryLength;
-
     // Virtual mass for momentum calculations
     this.virtualMass = PhysicsConfig.hand.virtualMass;
 
-    // Create kinematic physics body
-    this.body = this.createBody();
-    physicsWorld.addBody(`hand_${handedness}`, this.body);
-
     // Track if hand data is valid
     this.isActive = false;
+
+    // Fingertip joint indices in the joints array
+    this.fingertipIndices = {
+      thumb: 4,
+      index: 9,
+      middle: 14,
+      ring: 19,
+      pinky: 24
+    };
+
+    // Per-fingertip physics bodies
+    this.fingertipBodies = new Map();
+
+    // Per-finger velocity tracking
+    this.fingertipVelocities = new Map();
+    this.fingertipPrevPositions = new Map();
+    this.fingertipHasValidPrev = new Map();
+
+    // Create fingertip bodies
+    this.createFingertipBodies();
   }
 
-  createBody() {
-    const shape = new CANNON.Sphere(PhysicsConfig.hand.radius);
-    const body = new CANNON.Body({
-      mass: 0,
-      type: CANNON.Body.KINEMATIC,
-      shape: shape,
-      material: this.physicsWorld.handMaterial,
-      collisionFilterGroup: this.physicsWorld.COLLISION_GROUPS.VR_HAND,
-      collisionFilterMask: this.physicsWorld.COLLISION_GROUPS.PLAYER
-    });
+  createFingertipBodies() {
+    const radius = PhysicsConfig.hand.fingertipRadius;
 
-    // Start at a position far away (inactive)
-    body.position.set(0, -100, 0);
+    for (const [name, index] of Object.entries(this.fingertipIndices)) {
+      const shape = new CANNON.Sphere(radius);
+      const body = new CANNON.Body({
+        mass: 0,
+        type: CANNON.Body.KINEMATIC,
+        shape: shape,
+        material: this.physicsWorld.handMaterial,
+        collisionFilterGroup: this.physicsWorld.COLLISION_GROUPS.VR_HAND,
+        collisionFilterMask: this.physicsWorld.COLLISION_GROUPS.PLAYER,
+        collisionResponse: true
+      });
 
-    return body;
+      // Start at a position far away (inactive)
+      body.position.set(0, -100, 0);
+
+      this.physicsWorld.addBody(`hand_${this.handedness}_${name}`, body);
+      this.fingertipBodies.set(name, body);
+      this.fingertipVelocities.set(name, new THREE.Vector3());
+      this.fingertipPrevPositions.set(name, new THREE.Vector3());
+      this.fingertipHasValidPrev.set(name, false);
+    }
   }
 
-  update(wristPosition, deltaTime) {
-    if (!wristPosition) {
+  update(joints, pinchDistance, deltaTime) {
+    if (!joints || joints.length < 25) {
       this.isActive = false;
-      // Move body out of the way when inactive
-      this.body.position.set(0, -100, 0);
+      // Move all bodies away when inactive
+      for (const body of this.fingertipBodies.values()) {
+        body.position.set(0, -100, 0);
+      }
+      // Reset velocity tracking
+      for (const name of Object.keys(this.fingertipIndices)) {
+        this.fingertipHasValidPrev.set(name, false);
+        this.fingertipVelocities.get(name)?.set(0, 0, 0);
+      }
       return;
     }
 
     this.isActive = true;
 
-    // Update position tracking
-    this.previousPosition.copy(this.currentPosition);
-    this.currentPosition.set(wristPosition.x, wristPosition.y, wristPosition.z);
+    // Determine if near pinch (disable thumb/index collision)
+    const nearPinchThreshold = PhysicsConfig.hand.nearPinchThreshold;
+    const nearPinch = pinchDistance < nearPinchThreshold;
 
-    // Calculate instantaneous velocity
-    if (this.hasValidPreviousPosition && deltaTime > 0) {
-      const instantVelocity = new THREE.Vector3()
-        .subVectors(this.currentPosition, this.previousPosition)
-        .divideScalar(deltaTime);
+    for (const [name, index] of Object.entries(this.fingertipIndices)) {
+      const joint = joints[index];
+      const body = this.fingertipBodies.get(name);
+      const prevPos = this.fingertipPrevPositions.get(name);
+      const velocity = this.fingertipVelocities.get(name);
 
-      // Add to history for smoothing
-      this.velocityHistory.push(instantVelocity.clone());
-      if (this.velocityHistory.length > this.maxHistoryLength) {
-        this.velocityHistory.shift();
+      if (!joint) {
+        // Joint not available
+        body.position.set(0, -100, 0);
+        this.fingertipHasValidPrev.set(name, false);
+        velocity.set(0, 0, 0);
+        continue;
       }
 
-      // Update smoothed velocity
-      this.velocity.set(0, 0, 0);
-      for (const v of this.velocityHistory) {
-        this.velocity.add(v);
+      // Disable thumb/index when near pinch (preparing to grab)
+      if (nearPinch && (name === 'thumb' || name === 'index')) {
+        body.position.set(0, -100, 0);
+        this.fingertipHasValidPrev.set(name, false);
+        velocity.set(0, 0, 0);
+        continue;
       }
-      this.velocity.divideScalar(this.velocityHistory.length);
+
+      // Calculate velocity from position change
+      if (this.fingertipHasValidPrev.get(name) && deltaTime > 0) {
+        velocity.set(
+          (joint.x - prevPos.x) / deltaTime,
+          (joint.y - prevPos.y) / deltaTime,
+          (joint.z - prevPos.z) / deltaTime
+        );
+
+        // Clear velocity if nearly stationary
+        if (velocity.length() < 0.01) {
+          velocity.set(0, 0, 0);
+        }
+      }
+
+      // Update previous position
+      prevPos.set(joint.x, joint.y, joint.z);
+      this.fingertipHasValidPrev.set(name, true);
+
+      // Update physics body position
+      body.position.set(joint.x, joint.y, joint.z);
     }
-
-    this.hasValidPreviousPosition = true;
-
-    // Update physics body position (kinematic follows hand)
-    this.body.position.set(
-      this.currentPosition.x,
-      this.currentPosition.y,
-      this.currentPosition.z
-    );
   }
 
+  // Get velocity for a specific fingertip
+  getFingertipVelocity(fingerName) {
+    return this.fingertipVelocities.get(fingerName)?.clone() || new THREE.Vector3();
+  }
+
+  // Get the maximum velocity across all active fingertips
   getVelocity() {
-    return this.velocity.clone();
+    let maxVelocity = new THREE.Vector3();
+    let maxSpeed = 0;
+
+    for (const velocity of this.fingertipVelocities.values()) {
+      const speed = velocity.length();
+      if (speed > maxSpeed) {
+        maxSpeed = speed;
+        maxVelocity = velocity.clone();
+      }
+    }
+
+    return maxVelocity;
   }
 
   getSpeed() {
-    return this.velocity.length();
+    return this.getVelocity().length();
   }
 
   getMomentum() {
-    return this.velocity.clone().multiplyScalar(this.virtualMass);
+    return this.getVelocity().multiplyScalar(this.virtualMass);
   }
 
   getImpactForce() {
     return this.getMomentum().length();
   }
 
-  getPosition() {
-    return this.currentPosition.clone();
+  // Get physics body for a specific fingertip
+  getFingertipBody(fingerName) {
+    return this.fingertipBodies.get(fingerName);
   }
 
   reset() {
-    this.previousPosition.set(0, 0, 0);
-    this.currentPosition.set(0, 0, 0);
-    this.velocity.set(0, 0, 0);
-    this.velocityHistory = [];
-    this.hasValidPreviousPosition = false;
+    for (const [name] of this.fingertipBodies) {
+      this.fingertipBodies.get(name).position.set(0, -100, 0);
+      this.fingertipVelocities.get(name).set(0, 0, 0);
+      this.fingertipPrevPositions.get(name).set(0, 0, 0);
+      this.fingertipHasValidPrev.set(name, false);
+    }
     this.isActive = false;
-    this.body.position.set(0, -100, 0);
+  }
+
+  dispose() {
+    for (const [name] of this.fingertipBodies) {
+      this.physicsWorld.removeBody(`hand_${this.handedness}_${name}`);
+    }
+    this.fingertipBodies.clear();
+    this.fingertipVelocities.clear();
+    this.fingertipPrevPositions.clear();
+    this.fingertipHasValidPrev.clear();
   }
 }

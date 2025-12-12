@@ -5,6 +5,7 @@ import { VRHandPhysics } from '../physics/VRHandPhysics.js';
 import { PlayerPhysicsBody } from '../physics/PlayerPhysicsBody.js';
 import { CollisionHandler } from '../physics/CollisionHandler.js';
 import { PlayerStateMachine, PlayerState } from '../player/PlayerStateMachine.js';
+import { debugLog, debugError } from '../utils/DebugDisplay.js';
 
 class HostManager {
   constructor() {
@@ -28,6 +29,7 @@ class HostManager {
     // Callback for when player physics body is created
     this.onPlayerPhysicsCreated = null;
   }
+  
 
   initialize() {
     networkManager.on(MessageTypes.PLAYER_JOIN, (data) => this.onPlayerJoin(data));
@@ -57,6 +59,10 @@ class HostManager {
     this.collisionHandler = new CollisionHandler(this.physicsWorld, this.handPhysics);
     this.collisionHandler.onPlayerRagdoll = (playerId, impulse, velocity, sourceType, sourceId) => {
       this.triggerPlayerRagdoll(playerId, impulse, velocity, sourceType, sourceId);
+    };
+    // Provide callback to check if player is held (prevents collision processing during grab)
+    this.collisionHandler.isPlayerHeld = (playerId) => {
+      return this.heldPlayerId === playerId;
     };
 
     this.physicsInitialized = true;
@@ -255,19 +261,19 @@ class HostManager {
   updatePhysics(deltaTime, handData) {
     if (!this.physicsInitialized) return;
 
-    // Update hand physics from tracking data
-    if (handData?.left?.joints && handData.left.joints[0]) {
-      const wrist = handData.left.joints[0];
-      this.handPhysics.left.update(wrist, deltaTime);
+    // Update hand physics from tracking data (pass full joints array + pinch distance)
+    if (handData?.left?.joints && handData.left.joints.length >= 25) {
+      const pinchDist = this.calculatePinchDistance(handData.left.joints);
+      this.handPhysics.left.update(handData.left.joints, pinchDist, deltaTime);
     } else {
-      this.handPhysics.left.update(null, deltaTime);
+      this.handPhysics.left.update(null, Infinity, deltaTime);
     }
 
-    if (handData?.right?.joints && handData.right.joints[0]) {
-      const wrist = handData.right.joints[0];
-      this.handPhysics.right.update(wrist, deltaTime);
+    if (handData?.right?.joints && handData.right.joints.length >= 25) {
+      const pinchDist = this.calculatePinchDistance(handData.right.joints);
+      this.handPhysics.right.update(handData.right.joints, pinchDist, deltaTime);
     } else {
-      this.handPhysics.right.update(null, deltaTime);
+      this.handPhysics.right.update(null, Infinity, deltaTime);
     }
 
     // Step physics world
@@ -277,48 +283,102 @@ class HostManager {
     this.playerStateMachines.forEach((sm) => sm.update(deltaTime));
   }
 
+  // Calculate distance between thumb tip and index tip for pinch detection
+  calculatePinchDistance(joints) {
+    const thumbTip = joints[4];  // thumb tip index
+    const indexTip = joints[9];  // index finger tip index
+    if (!thumbTip || !indexTip) return Infinity;
+
+    return Math.sqrt(
+      (thumbTip.x - indexTip.x) ** 2 +
+      (thumbTip.y - indexTip.y) ** 2 +
+      (thumbTip.z - indexTip.z) ** 2
+    );
+  }
+
   // Trigger ragdoll on a player
   triggerPlayerRagdoll(playerId, impulse, velocity, sourceType = 'hand', sourceId = null) {
     const stateMachine = this.playerStateMachines.get(playerId);
-    if (stateMachine) {
+    if (!stateMachine) {
+      console.warn(`Cannot trigger ragdoll for player ${playerId}: no state machine`);
+      return;
+    }
+
+    try {
       stateMachine.triggerRagdoll(impulse, velocity);
+    } catch (error) {
+      console.error(`Error triggering ragdoll for player ${playerId}:`, error);
     }
   }
 
   // Player pickup methods
   pickupPlayer(playerId) {
-    this.heldPlayerId = playerId;
+    try {
+      debugLog(`HM: pickupPlayer ${playerId}`);
 
-    // Trigger held state
-    const stateMachine = this.playerStateMachines.get(playerId);
-    if (stateMachine) {
+      // Validate player exists and has physics ready
+      const stateMachine = this.playerStateMachines.get(playerId);
+      const physicsBody = this.playerPhysics.get(playerId);
+
+      if (!stateMachine || !physicsBody) {
+        debugLog(`WARN: physics not ready for ${playerId}`);
+        return false;
+      }
+
+      // Don't pickup if already holding someone
+      if (this.heldPlayerId) {
+        debugLog(`WARN: already holding ${this.heldPlayerId}`);
+        return false;
+      }
+
+      this.heldPlayerId = playerId;
+      debugLog(`HM: heldPlayerId = ${playerId}`);
+
+      // Trigger held state
+      debugLog(`HM: triggerHeld()`);
       stateMachine.triggerHeld();
-    }
+      debugLog(`HM: triggerHeld done`);
 
-    // Notify the player they're being picked up
-    networkManager.sendTo(playerId, {
-      type: MessageTypes.PLAYER_PICKUP,
-      heldBy: 'host'
-    });
+      // Notify the player they're being picked up
+      networkManager.sendTo(playerId, {
+        type: MessageTypes.PLAYER_PICKUP,
+        heldBy: 'host'
+      });
+
+      debugLog(`HM: pickup complete`);
+      return true;
+    } catch (err) {
+      debugError('pickupPlayer failed', err);
+      return false;
+    }
   }
 
   releasePlayer(throwVelocity = null) {
-    if (this.heldPlayerId) {
-      const playerId = this.heldPlayerId;
+    if (!this.heldPlayerId) return;
 
-      // Trigger release (may cause ragdoll if thrown hard)
-      const stateMachine = this.playerStateMachines.get(playerId);
-      if (stateMachine) {
-        stateMachine.triggerRelease(throwVelocity);
-      }
+    const playerId = this.heldPlayerId;
+    this.heldPlayerId = null; // Clear first to prevent re-entry
 
-      networkManager.sendTo(playerId, {
-        type: MessageTypes.PLAYER_RELEASE,
-        throwVelocity: throwVelocity ? { x: throwVelocity.x, y: throwVelocity.y, z: throwVelocity.z } : null
-      });
-
-      this.heldPlayerId = null;
+    // Temporarily disable hand collision to prevent hand pushing the player
+    const physicsBody = this.playerPhysics.get(playerId);
+    if (physicsBody) {
+      this.collisionHandler.scheduleHandCollisionReenable(physicsBody);
     }
+
+    // Trigger release (may cause ragdoll if thrown hard)
+    const stateMachine = this.playerStateMachines.get(playerId);
+    if (stateMachine) {
+      try {
+        stateMachine.triggerRelease(throwVelocity);
+      } catch (error) {
+        console.error(`Error releasing player ${playerId}:`, error);
+      }
+    }
+
+    networkManager.sendTo(playerId, {
+      type: MessageTypes.PLAYER_RELEASE,
+      throwVelocity: throwVelocity ? { x: throwVelocity.x, y: throwVelocity.y, z: throwVelocity.z } : null
+    });
   }
 
   updateHeldPlayerPosition(position) {

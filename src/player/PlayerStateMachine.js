@@ -71,12 +71,14 @@ export class PlayerStateMachine {
         this.recoveryCounter = 0;
 
         // Switch physics to dynamic
-        this.physicsBody.setMode('dynamic');
+        if (this.physicsBody) {
+          this.physicsBody.setMode('dynamic');
 
-        // Apply impulse if provided
-        if (data.impulse) {
-          this.ragdollImpulse.copy(data.impulse);
-          this.physicsBody.applyImpulse(data.impulse);
+          // Set velocity directly if provided
+          if (data.velocity) {
+            this.ragdollImpulse.copy(data.velocity);
+            this.physicsBody.setVelocity(data.velocity);
+          }
         }
 
         // Play falling animation
@@ -84,13 +86,21 @@ export class PlayerStateMachine {
         break;
 
       case PlayerState.RECOVERING:
+        // Switch to kinematic immediately to stop physics simulation
+        if (this.physicsBody) {
+          this.physicsBody.setMode('kinematic');
+          // Reset to upright position on ground (keep X/Z, reset Y to ground)
+          const pos = this.physicsBody.getPosition();
+          this.physicsBody.setPosition(pos.x, 0, pos.z);
+          this.physicsBody.resetRotation();
+        }
         // Play get up animation
         this.animationController?.play('getup');
         break;
 
       case PlayerState.WALKING:
         // Switch physics to kinematic
-        this.physicsBody.setMode('kinematic');
+        this.physicsBody?.setMode('kinematic');
 
         // Play idle animation
         this.animationController?.play('idle');
@@ -98,7 +108,7 @@ export class PlayerStateMachine {
 
       case PlayerState.HELD:
         // Switch physics to kinematic (no collision while held)
-        this.physicsBody.setMode('kinematic');
+        this.physicsBody?.setMode('kinematic');
 
         // Play idle animation
         this.animationController?.play('idle');
@@ -135,7 +145,9 @@ export class PlayerStateMachine {
       return;
     }
 
-    // Check velocity for recovery
+    // Check velocity for recovery (with null safety)
+    if (!this.physicsBody) return;
+
     const speed = this.physicsBody.getSpeed();
 
     if (speed < PhysicsConfig.forces.recoveryVelocity) {
@@ -174,18 +186,11 @@ export class PlayerStateMachine {
 
   triggerRelease(throwVelocity = null) {
     if (this.state === PlayerState.HELD) {
-      // Check if thrown with enough force
-      if (throwVelocity) {
-        const throwForce = throwVelocity.length() * PhysicsConfig.hand.virtualMass;
-        if (throwForce >= PhysicsConfig.forces.ragdollThreshold) {
-          const impulse = throwVelocity.clone().multiplyScalar(
-            PhysicsConfig.hand.virtualMass * PhysicsConfig.forces.impulseMultiplier
-          );
-          impulse.y += Math.abs(impulse.length()) * PhysicsConfig.forces.upwardImpulseBoost;
-          return this.transition(PlayerState.RAGDOLL, { impulse, velocity: throwVelocity });
-        }
-      }
-      return this.transition(PlayerState.WALKING);
+      // Use actual object velocity directly - no multipliers needed
+      const velocity = (throwVelocity && throwVelocity.length() > 0.1)
+        ? throwVelocity.clone()
+        : new THREE.Vector3(0, -0.5, 0); // Gentle drop if no velocity
+      return this.transition(PlayerState.RAGDOLL, { velocity });
     }
     return false;
   }

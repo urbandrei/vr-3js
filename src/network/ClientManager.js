@@ -22,6 +22,11 @@ class ClientManager {
     this.onRagdollTriggered = null;
     this.onRagdollRecovery = null;
 
+    // Local player ragdoll callbacks (for the player being controlled)
+    this.onLocalRagdollUpdate = null;
+    this.onLocalRecovery = null;
+    this.onLocalWalking = null;
+
     this.stateUpdateInterval = null;
     this.localPlayerState = null;
     this.isBeingHeld = false;
@@ -75,8 +80,24 @@ class ClientManager {
     if (this.onObjectsUpdated) this.onObjectsUpdated(this.objects);
 
     // Handle player physics states
-    if (data.playerPhysics && this.onPlayerPhysicsUpdated) {
-      this.onPlayerPhysicsUpdated(data.playerPhysics);
+    if (data.playerPhysics) {
+      // Find our own physics state
+      const myState = data.playerPhysics.find(p => p.id === networkManager.playerId);
+      if (myState) {
+        // Handle local player state based on physics state
+        if (myState.state === 'ragdoll' || myState.state === 'recovering') {
+          if (this.onLocalRagdollUpdate) {
+            this.onLocalRagdollUpdate(myState);
+          }
+        } else if (myState.state === 'walking' && this.onLocalWalking) {
+          this.onLocalWalking();
+        }
+      }
+
+      // Update remote players (callback for other players)
+      if (this.onPlayerPhysicsUpdated) {
+        this.onPlayerPhysicsUpdated(data.playerPhysics);
+      }
     }
   }
 
@@ -115,6 +136,20 @@ class ClientManager {
 
   handleRagdollTriggered(data) {
     console.log('Player ragdoll triggered:', data.playerId);
+
+    // Check if this is for us (local player)
+    if (data.playerId === networkManager.playerId) {
+      // Local player ragdoll - initial trigger (before physics updates arrive)
+      if (this.onLocalRagdollUpdate) {
+        this.onLocalRagdollUpdate({
+          state: 'ragdoll',
+          position: null, // Will be updated by physics state
+          impulse: data.impulse
+        });
+      }
+    }
+
+    // Also notify for remote players
     if (this.onRagdollTriggered) {
       this.onRagdollTriggered(data);
     }
@@ -122,6 +157,12 @@ class ClientManager {
 
   handleRagdollRecovery(data) {
     console.log('Player ragdoll recovery:', data.playerId);
+
+    // Check if this is for us (local player)
+    if (data.playerId === networkManager.playerId && this.onLocalRecovery) {
+      this.onLocalRecovery();
+    }
+
     if (this.onRagdollRecovery) {
       this.onRagdollRecovery(data);
     }

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { PhysicsConfig } from './PhysicsConfig.js';
+import { debugLog } from '../utils/DebugDisplay.js';
 
 export class CollisionHandler {
   constructor(physicsWorld, handPhysics) {
@@ -8,6 +10,15 @@ export class CollisionHandler {
 
     // Callback for ragdoll triggers
     this.onPlayerRagdoll = null; // (playerId, impulse, velocity, sourceType, sourceId) => {}
+
+    // Callback to check if player is held (skip collisions for held players)
+    this.isPlayerHeld = null; // (playerId) => boolean
+
+    // Callback to check if block is held by a specific hand (skip collision if held by hitting hand)
+    this.isBlockHeldByHand = null; // (blockId, handIndex) => boolean
+
+    // Objects with temporarily disabled hand collision (re-enable after delay)
+    this.pendingReenables = new Map(); // object -> timeoutId
 
     // Setup collision listener
     this.setupCollisionListener();
@@ -29,11 +40,17 @@ export class CollisionHandler {
 
     if (!idA || !idB) return;
 
-    // Check for hand-player collision
+    // Check for hand-player collision (ID format: hand_{handedness}_{finger})
     if (idA.startsWith('hand_') && idB.startsWith('player_')) {
       this.handleHandPlayerCollision(idA, idB, bodyA, bodyB);
     } else if (idB.startsWith('hand_') && idA.startsWith('player_')) {
       this.handleHandPlayerCollision(idB, idA, bodyB, bodyA);
+    }
+    // Check for hand-block collision
+    else if (idA.startsWith('hand_') && idB.startsWith('block_')) {
+      this.handleHandBlockCollision(idA, idB, bodyA, bodyB);
+    } else if (idB.startsWith('hand_') && idA.startsWith('block_')) {
+      this.handleHandBlockCollision(idB, idA, bodyB, bodyA);
     }
     // Check for player-player collision
     else if (idA.startsWith('player_') && idB.startsWith('player_')) {
@@ -41,11 +58,39 @@ export class CollisionHandler {
     }
   }
 
+  // Parse hand ID to extract handedness and finger name
+  // ID format: hand_{handedness}_{finger} (e.g., "hand_left_thumb")
+  parseHandId(handId) {
+    const parts = handId.split('_');
+    if (parts.length >= 3) {
+      return {
+        handedness: parts[1],  // 'left' or 'right'
+        finger: parts[2]       // 'thumb', 'index', 'middle', 'ring', 'pinky'
+      };
+    }
+    // Fallback for old format (hand_left or hand_right)
+    return {
+      handedness: parts[1] || 'unknown',
+      finger: null
+    };
+  }
+
   handleHandPlayerCollision(handId, playerId, handBody, playerBody) {
-    const handedness = handId.replace('hand_', '');
+    const playerIdStr = playerId.replace('player_', '');
+
+    // Skip collision if player is currently held (prevents freeze from continuous collisions)
+    if (this.isPlayerHeld && this.isPlayerHeld(playerIdStr)) {
+      // Player is held, skip collision (don't log every frame - too noisy)
+      return;
+    }
+
+    // Parse hand ID to get handedness (new format: hand_left_thumb)
+    const { handedness, finger } = this.parseHandId(handId);
     const handPhysics = this.handPhysics[handedness];
 
     if (!handPhysics || !handPhysics.isActive) return;
+
+    debugLog(`Collision: ${handedness}/${finger} -> ${playerIdStr}`);
 
     // Get impact force from hand velocity
     const impactForce = handPhysics.getImpactForce();
@@ -60,15 +105,74 @@ export class CollisionHandler {
       // Add upward component for satisfying arc
       impulse.y += Math.abs(impulse.length()) * PhysicsConfig.forces.upwardImpulseBoost;
 
-      const playerIdStr = playerId.replace('player_', '');
-
       if (this.onPlayerRagdoll) {
         this.onPlayerRagdoll(playerIdStr, impulse, velocity, 'hand', handId);
       }
     }
   }
 
+  handleHandBlockCollision(handId, blockId, handBody, blockBody) {
+    // Parse hand ID to get handedness (new format: hand_left_thumb)
+    const { handedness } = this.parseHandId(handId);
+    const handIndex = handedness === 'left' ? 0 : 1;
+
+    // Skip collision if block is currently held by THIS hand
+    if (this.isBlockHeldByHand && this.isBlockHeldByHand(blockId, handIndex)) {
+      return;
+    }
+
+    const handPhysics = this.handPhysics[handedness];
+    if (!handPhysics || !handPhysics.isActive) return;
+
+    // Get hand velocity
+    const velocity = handPhysics.getVelocity();
+    const speed = velocity.length();
+
+    // Only apply impulse if hand is moving fast enough
+    const minSpeed = 0.3; // 30cm/s minimum to knock a block
+    if (speed < minSpeed) return;
+
+    // Calculate impulse based on hand velocity and virtual mass
+    const impulseMultiplier = PhysicsConfig.forces.impulseMultiplier;
+    const impulse = new CANNON.Vec3(
+      velocity.x * handPhysics.virtualMass * impulseMultiplier,
+      velocity.y * handPhysics.virtualMass * impulseMultiplier,
+      velocity.z * handPhysics.virtualMass * impulseMultiplier
+    );
+
+    // Apply impulse to block body at center of mass
+    blockBody.applyImpulse(impulse, blockBody.position);
+
+    // Add some angular velocity based on impact point relative to center
+    // This makes the block spin realistically when hit off-center
+    const handPos = handPhysics.body.position;
+    const blockPos = blockBody.position;
+    const hitOffset = new CANNON.Vec3(
+      handPos.x - blockPos.x,
+      handPos.y - blockPos.y,
+      handPos.z - blockPos.z
+    );
+
+    // Cross product of hit offset and impulse gives torque direction
+    const torque = hitOffset.cross(impulse);
+    torque.scale(0.5, torque); // Reduce angular effect
+    blockBody.angularVelocity.vadd(torque, blockBody.angularVelocity);
+
+    // Wake up the body to ensure physics processes
+    blockBody.wakeUp();
+  }
+
   handlePlayerPlayerCollision(playerIdA, playerIdB, bodyA, bodyB) {
+    const playerIdStrA = playerIdA.replace('player_', '');
+    const playerIdStrB = playerIdB.replace('player_', '');
+
+    // Skip if either player is held
+    if (this.isPlayerHeld) {
+      if (this.isPlayerHeld(playerIdStrA) || this.isPlayerHeld(playerIdStrB)) {
+        return;
+      }
+    }
+
     // Get velocities
     const velocityA = new THREE.Vector3(
       bodyA.velocity.x,
@@ -86,9 +190,6 @@ export class CollisionHandler {
 
     const forceA = velocityA.length() * massA;
     const forceB = velocityB.length() * massB;
-
-    const playerIdStrA = playerIdA.replace('player_', '');
-    const playerIdStrB = playerIdB.replace('player_', '');
 
     // A hits B
     if (forceA >= PhysicsConfig.forces.chainReactionThreshold) {
@@ -113,5 +214,28 @@ export class CollisionHandler {
         this.onPlayerRagdoll(playerIdStrA, impulse, velocityB, 'player', playerIdStrB);
       }
     }
+  }
+
+  // Schedule re-enabling hand collision after a delay (used after release)
+  scheduleHandCollisionReenable(object, delayMs = 150) {
+    // Cancel any existing pending re-enable for this object
+    if (this.pendingReenables.has(object)) {
+      clearTimeout(this.pendingReenables.get(object));
+    }
+
+    // Disable hand collision immediately
+    if (object.disableHandCollision) {
+      object.disableHandCollision();
+    }
+
+    // Schedule re-enable after delay
+    const timeoutId = setTimeout(() => {
+      if (object.enableHandCollision) {
+        object.enableHandCollision();
+      }
+      this.pendingReenables.delete(object);
+    }, delayMs);
+
+    this.pendingReenables.set(object, timeoutId);
   }
 }

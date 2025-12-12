@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PlayerState } from './PlayerStateMachine.js';
 
 // Tiny avatar scale - eye height ~8cm
 const EYE_HEIGHT = 0.08;
@@ -17,6 +18,7 @@ export class LocalPlayer {
 
     this.isPointerLocked = false;
     this.isBeingHeld = false; // When VR player picks us up
+    this.currentState = PlayerState.WALKING;
 
     this.setupControls();
   }
@@ -72,6 +74,12 @@ export class LocalPlayer {
     // Don't move if being held by VR player
     if (this.isBeingHeld) return;
 
+    // Don't process movement during ragdoll/recovery - position comes from physics
+    if (this.currentState === PlayerState.RAGDOLL ||
+        this.currentState === PlayerState.RECOVERING) {
+      return;
+    }
+
     // Get camera's forward and right directions (horizontal only)
     const forward = new THREE.Vector3();
     this.camera.getWorldDirection(forward);
@@ -121,8 +129,49 @@ export class LocalPlayer {
 
   setBeingHeld(held, position) {
     this.isBeingHeld = held;
-    if (held && position) {
-      this.camera.position.set(position.x, position.y, position.z);
+    if (held) {
+      this.currentState = PlayerState.HELD;
+      if (position) {
+        this.camera.position.set(position.x, position.y, position.z);
+      }
     }
+  }
+
+  // Update position from physics during ragdoll - keeps camera upright
+  updateFromPhysics(physicsState) {
+    if (!physicsState) return;
+
+    // Update camera position from physics body, offset for eye height
+    this.camera.position.set(
+      physicsState.position.x,
+      physicsState.position.y + EYE_HEIGHT,
+      physicsState.position.z
+    );
+    // Camera orientation stays player-controlled (upright) - don't apply physics rotation
+  }
+
+  // Called when ragdoll state is received from host
+  setRagdollState(physicsState) {
+    this.currentState = PlayerState.RAGDOLL;
+    this.isBeingHeld = false;
+    this.updateFromPhysics(physicsState);
+  }
+
+  // Called when transitioning to recovery
+  setRecovering() {
+    this.currentState = PlayerState.RECOVERING;
+    // Reset camera to ground level immediately
+    this.camera.position.y = EYE_HEIGHT;
+  }
+
+  // Called when recovery is complete
+  setWalking() {
+    this.currentState = PlayerState.WALKING;
+    // Reset camera to proper eye height
+    this.camera.position.y = EYE_HEIGHT;
+  }
+
+  getCurrentState() {
+    return this.currentState;
   }
 }

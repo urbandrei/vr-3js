@@ -4,9 +4,10 @@ import { AnimationController } from '../utils/AnimationController.js';
 import { PlayerState } from './PlayerStateMachine.js';
 import { PhysicsConfig } from '../physics/PhysicsConfig.js';
 
-const MODEL_URL = './models/player.glb';
+// Use absolute path to avoid resolution issues in WebXR context
+const MODEL_URL = new URL('./models/player.glb', window.location.href).href;
 const TARGET_HEIGHT = 0.12; // 12cm tall
-const MOVEMENT_THRESHOLD = 0.001;
+const MOVEMENT_THRESHOLD = 0.005; // 5mm threshold for movement detection
 
 export class RemotePlayer {
   constructor(playerId, scene) {
@@ -46,6 +47,7 @@ export class RemotePlayer {
 
   async loadModel() {
     try {
+      console.log(`Loading model for player ${this.playerId} from: ${MODEL_URL}`);
       const gltf = await modelLoader.load(MODEL_URL);
 
       const model = gltf.scene;
@@ -74,6 +76,8 @@ export class RemotePlayer {
       this.modelLoaded = true;
     } catch (error) {
       console.error(`Failed to load model for player ${this.playerId}:`, error);
+      console.error(`Model URL was: ${MODEL_URL}`);
+      console.warn(`Using fallback avatar for player ${this.playerId}`);
       this.createFallbackAvatar();
     }
   }
@@ -163,6 +167,9 @@ export class RemotePlayer {
         break;
       case PlayerState.RECOVERING:
         this.animationController?.play('getup');
+        // Reset to upright position on ground immediately
+        this.mesh.quaternion.set(0, 0, 0, 1);
+        this.mesh.position.y = 0;
         break;
       case PlayerState.WALKING:
         this.animationController?.play('idle');
@@ -262,6 +269,8 @@ export class RemotePlayer {
       this.ragdollBlendWeight = 0;
       // Reset rotation to upright
       this.mesh.quaternion.set(0, 0, 0, 1);
+      // Reset Y position to ground level (keep X/Z)
+      this.mesh.position.y = 0;
     }
   }
 
@@ -284,21 +293,29 @@ export class RemotePlayer {
       return;
     }
 
-    // Normal walking state - smooth interpolation
-    this.mesh.position.lerp(this.targetPosition, 10 * deltaTime);
-
-    // Smooth rotation interpolation
-    const currentY = this.mesh.rotation.y;
-    const diff = this.targetRotation - currentY;
-    let normalizedDiff = diff;
-    while (normalizedDiff > Math.PI) normalizedDiff -= 2 * Math.PI;
-    while (normalizedDiff < -Math.PI) normalizedDiff += 2 * Math.PI;
-    this.mesh.rotation.y += normalizedDiff * 10 * deltaTime;
+    // Calculate movement direction for facing
+    const movementDir = new THREE.Vector3()
+      .subVectors(this.targetPosition, this.mesh.position);
+    const movementDistance = movementDir.length();
 
     // Detect movement for animation
-    const distanceToTarget = this.mesh.position.distanceTo(this.targetPosition);
     const wasMoving = this.isMoving;
-    this.isMoving = distanceToTarget > MOVEMENT_THRESHOLD;
+    this.isMoving = movementDistance > MOVEMENT_THRESHOLD;
+
+    // Update facing direction based on movement (only when actually moving)
+    if (this.isMoving && movementDistance > 0.001) {
+      // Face movement direction
+      const targetAngle = Math.atan2(movementDir.x, movementDir.z);
+      // Smooth rotation toward movement direction
+      const currentY = this.mesh.rotation.y;
+      let angleDiff = targetAngle - currentY;
+      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+      this.mesh.rotation.y += angleDiff * 10 * deltaTime;
+    }
+
+    // Normal walking state - smooth position interpolation
+    this.mesh.position.lerp(this.targetPosition, 10 * deltaTime);
 
     // Update animation based on movement state
     if (this.animationController) {

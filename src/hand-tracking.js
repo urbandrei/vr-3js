@@ -13,8 +13,8 @@ const HAND_JOINTS = [
 ];
 
 // Pinch thresholds with hysteresis
-const PINCH_START_DISTANCE = 0.02; // 2cm - close enough to grab
-const PINCH_END_DISTANCE = 0.05;   // 5cm - far enough to release
+const PINCH_START_DISTANCE = 0.02;  // 2cm - close enough to grab
+const PINCH_END_DISTANCE = 0.025;   // 2.5cm - more responsive release
 
 export class HandTracker {
   constructor(hand, handedness) {
@@ -69,6 +69,15 @@ export class HandTracker {
 
   getPinchPosition() {
     return this.pinchPosition;
+  }
+
+  getPinchOrientation() {
+    // Use wrist joint orientation for held object rotation
+    const wrist = this.hand.joints['wrist'];
+    if (wrist) {
+      return wrist.quaternion.clone();
+    }
+    return new THREE.Quaternion();
   }
 
   getJointData() {
