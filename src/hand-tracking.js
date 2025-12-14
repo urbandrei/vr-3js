@@ -12,6 +12,15 @@ const HAND_JOINTS = [
   'pinky-finger-metacarpal', 'pinky-finger-phalanx-proximal', 'pinky-finger-phalanx-intermediate', 'pinky-finger-phalanx-distal', 'pinky-finger-tip'
 ];
 
+// Only fingertip joints for network transmission (reduces data by 80%)
+const FINGERTIP_JOINTS = [
+  'thumb-tip',
+  'index-finger-tip',
+  'middle-finger-tip',
+  'ring-finger-tip',
+  'pinky-finger-tip'
+];
+
 // Pinch thresholds with hysteresis
 const PINCH_START_DISTANCE = 0.02;  // 2cm - close enough to grab
 const PINCH_END_DISTANCE = 0.025;   // 2.5cm - more responsive release
@@ -85,6 +94,27 @@ export class HandTracker {
     const tempPos = new THREE.Vector3();
 
     for (const jointName of HAND_JOINTS) {
+      const joint = this.hand.joints[jointName];
+      if (joint) {
+        joint.getWorldPosition(tempPos);
+        joints.push({ x: tempPos.x, y: tempPos.y, z: tempPos.z });
+      } else {
+        joints.push(null);
+      }
+    }
+
+    return {
+      joints,
+      pinching: this.isPinching
+    };
+  }
+
+  // Lightweight version for network transmission - only 5 fingertip positions
+  getEssentialJointData() {
+    const joints = [];
+    const tempPos = new THREE.Vector3();
+
+    for (const jointName of FINGERTIP_JOINTS) {
       const joint = this.hand.joints[jointName];
       if (joint) {
         joint.getWorldPosition(tempPos);

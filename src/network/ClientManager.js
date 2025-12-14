@@ -35,7 +35,7 @@ class ClientManager {
   initialize() {
     networkManager.on('initial_state', (data) => this.onInitialState(data));
     networkManager.on(MessageTypes.WORLD_STATE, (data) => this.onWorldState(data));
-    networkManager.on(MessageTypes.HAND_TRACKING, (data) => this.onHandTracking(data));
+    // Hand tracking now included in WORLD_STATE (vrHands field)
     networkManager.on(MessageTypes.GRAB_RESPONSE, (data) => this.handleGrabResponse(data));
     networkManager.on(MessageTypes.PLAYER_PICKUP, (data) => this.handlePickedUp(data));
     networkManager.on(MessageTypes.PLAYER_RELEASE, (data) => this.handleReleased(data));
@@ -61,25 +61,42 @@ class ClientManager {
   }
 
   onWorldState(data) {
-    // Update players (excluding self)
-    this.players.clear();
-    data.players.forEach(p => {
-      if (p.id !== networkManager.playerId) {
-        this.players.set(p.id, p);
-      }
-    });
+    // Handle full state vs delta updates
+    if (data.isFullState) {
+      // Full state: clear and rebuild
+      this.players.clear();
+      data.players.forEach(p => {
+        if (p.id !== networkManager.playerId) {
+          this.players.set(p.id, p);
+        }
+      });
 
-    // Update objects
-    this.objects.clear();
-    data.objects.forEach(o => this.objects.set(o.id, o));
+      this.objects.clear();
+      data.objects.forEach(o => this.objects.set(o.id, o));
+    } else {
+      // Delta update: merge changes
+      data.players?.forEach(p => {
+        if (p.id !== networkManager.playerId) {
+          this.players.set(p.id, p);
+        }
+      });
+
+      data.objects?.forEach(o => this.objects.set(o.id, o));
+    }
 
     // Update VR head
     this.vrHeadData = data.vrHead;
 
+    // Update VR hands (now included in world state)
+    if (data.vrHands) {
+      this.vrHandData = data.vrHands;
+      if (this.onVRHandsUpdated) this.onVRHandsUpdated(data.vrHands);
+    }
+
     if (this.onPlayersUpdated) this.onPlayersUpdated(this.players);
     if (this.onObjectsUpdated) this.onObjectsUpdated(this.objects);
 
-    // Handle player physics states
+    // Handle player physics states (always process - these are already filtered)
     if (data.playerPhysics) {
       // Find our own physics state
       const myState = data.playerPhysics.find(p => p.id === networkManager.playerId);
@@ -99,11 +116,6 @@ class ClientManager {
         this.onPlayerPhysicsUpdated(data.playerPhysics);
       }
     }
-  }
-
-  onHandTracking(data) {
-    this.vrHandData = data.hands;
-    if (this.onVRHandsUpdated) this.onVRHandsUpdated(data.hands);
   }
 
   handleGrabResponse(data) {

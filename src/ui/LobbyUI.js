@@ -2,13 +2,14 @@ export class LobbyUI {
   constructor() {
     this.container = null;
     this.roomCodeDisplay = null;
-    this.joinInput = null;
     this.statusText = null;
     this.playerList = null;
 
     this.onHostGame = null;
     this.onJoinGame = null;
     this.onEnterVR = null;
+    this.onHostDashboard = null;
+    this.onJoinAsVR = null;
 
     this.createUI();
   }
@@ -21,21 +22,20 @@ export class LobbyUI {
         <h1>VR Sandbox</h1>
 
         <div class="lobby-section">
-          <h2>Host Game (VR)</h2>
-          <button id="host-btn" class="btn btn-primary">Host Game</button>
-          <div id="room-code-display" class="room-code" style="display: none;">
-            <span>Room Code:</span>
-            <strong id="room-code"></strong>
-          </div>
-          <button id="enter-vr-btn" class="btn btn-vr" style="display: none;">Enter VR</button>
+          <h2>Host (Dashboard)</h2>
+          <button id="host-dashboard-btn" class="btn btn-host">Host Dashboard</button>
         </div>
 
-        <div class="lobby-divider">OR</div>
+        <div class="lobby-divider">PLAYERS</div>
 
         <div class="lobby-section">
-          <h2>Join Game (PC)</h2>
-          <input type="text" id="join-input" placeholder="Enter room code" maxlength="6" />
-          <button id="join-btn" class="btn btn-secondary">Join</button>
+          <h2>Join as VR Player</h2>
+          <button id="join-vr-btn" class="btn btn-vr">Join as VR</button>
+        </div>
+
+        <div class="lobby-section">
+          <h2>Join as PC Player</h2>
+          <button id="join-btn" class="btn btn-secondary">Join as PC</button>
         </div>
 
         <div id="status" class="status"></div>
@@ -132,25 +132,9 @@ export class LobbyUI {
         color: white;
       }
 
-      #join-input {
-        width: 100%;
-        padding: 14px;
-        border: 2px solid rgba(255, 255, 255, 0.2);
-        border-radius: 8px;
-        background: rgba(255, 255, 255, 0.1);
+      .btn-host {
+        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
         color: white;
-        font-size: 18px;
-        text-align: center;
-        text-transform: uppercase;
-        letter-spacing: 4px;
-        margin-bottom: 10px;
-        box-sizing: border-box;
-      }
-
-      #join-input::placeholder {
-        color: #666;
-        letter-spacing: 1px;
-        text-transform: none;
       }
 
       .room-code {
@@ -229,33 +213,26 @@ export class LobbyUI {
     document.body.appendChild(this.container);
 
     this.roomCodeDisplay = document.getElementById('room-code-display');
-    this.joinInput = document.getElementById('join-input');
     this.statusText = document.getElementById('status');
     this.playerList = document.getElementById('player-list');
 
-    document.getElementById('host-btn').addEventListener('click', () => {
-      if (this.onHostGame) this.onHostGame();
+    document.getElementById('host-dashboard-btn').addEventListener('click', () => {
+      if (this.onHostDashboard) this.onHostDashboard();
+    });
+
+    document.getElementById('join-vr-btn').addEventListener('click', () => {
+      if (this.onJoinAsVR) this.onJoinAsVR();
     });
 
     document.getElementById('join-btn').addEventListener('click', () => {
-      const code = this.joinInput.value.toUpperCase().trim();
-      if (code && this.onJoinGame) this.onJoinGame(code);
-    });
-
-    document.getElementById('enter-vr-btn').addEventListener('click', () => {
-      if (this.onEnterVR) this.onEnterVR();
-    });
-
-    this.joinInput.addEventListener('input', () => {
-      this.joinInput.value = this.joinInput.value.toUpperCase();
+      if (this.onJoinGame) this.onJoinGame();
     });
   }
 
   showRoomCode(code) {
-    document.getElementById('room-code').textContent = code;
-    this.roomCodeDisplay.style.display = 'block';
-    document.getElementById('enter-vr-btn').style.display = 'block';
-    document.getElementById('host-btn').style.display = 'none';
+    // Room code display is no longer used in new UI
+    // but keep method for backwards compatibility
+    console.log('Room code:', code);
   }
 
   setStatus(message) {

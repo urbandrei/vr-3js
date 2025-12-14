@@ -251,6 +251,41 @@ export class GrabSystem {
     return velocity;
   }
 
+  // Confirm a grab (for client mode after host approval)
+  confirmGrab(objectId, handIndex) {
+    // Grab already happened locally, just log confirmation
+    const obj = this.grabbedObjects.get(handIndex);
+    if (obj && obj.userData.networkId === objectId) {
+      console.log(`Grab confirmed: ${objectId} by hand ${handIndex}`);
+    }
+  }
+
+  // Cancel a grab (for client mode if host denies)
+  cancelGrab(objectId, handIndex) {
+    const obj = this.grabbedObjects.get(handIndex);
+    if (obj && obj.userData.networkId === objectId) {
+      // Restore visual
+      if (obj.material?.emissive) {
+        obj.material.emissive.setHex(0x000000);
+      }
+      // Clear state
+      this.grabbedObjects.delete(handIndex);
+      this.grabOffsets.delete(handIndex);
+      this.grabRotationOffsets.delete(handIndex);
+      this.positionHistories.delete(handIndex);
+      this.rotationHistories.delete(handIndex);
+      console.log(`Grab denied: ${objectId} by hand ${handIndex}`);
+    }
+  }
+
+  // Check if object (by ID) is held by any hand
+  isObjectHeldById(objectId) {
+    for (const grabbedObj of this.grabbedObjects.values()) {
+      if (grabbedObj.userData.networkId === objectId) return true;
+    }
+    return false;
+  }
+
   // Calculate angular velocity from rotation history for a specific hand
   getObjectAngularVelocity(handIndex) {
     const rotHistory = this.rotationHistories.get(handIndex);

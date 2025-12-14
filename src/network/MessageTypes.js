@@ -20,7 +20,13 @@ export const MessageTypes = {
   PLAYER_POSITION: 'player_position',
 
   // Physics sync
-  PLAYER_PHYSICS_STATE: 'player_physics_state',
   RAGDOLL_TRIGGERED: 'ragdoll_triggered',
-  RAGDOLL_RECOVERY: 'ragdoll_recovery'
+  RAGDOLL_RECOVERY: 'ragdoll_recovery',
+
+  // VR Client -> Host (VR player as client)
+  VR_CLIENT_JOIN: 'vr_client_join',
+  VR_HAND_TRACKING: 'vr_hand_tracking',
+  VR_HEAD_TRACKING: 'vr_head_tracking',
+  VR_GRAB_REQUEST: 'vr_grab_request',
+  VR_RELEASE: 'vr_release'
 };

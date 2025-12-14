@@ -14,6 +14,7 @@ class HostManager {
     this.vrHandData = null;
     this.vrHeadData = null;
     this.heldPlayerId = null;
+    this.cameraTransformData = null;
 
     // Physics system
     this.physicsWorld = null;
@@ -24,7 +25,13 @@ class HostManager {
     this.physicsInitialized = false;
 
     this.stateUpdateInterval = null;
-    this.handUpdateInterval = null;
+
+    // Delta encoding - track previous state to only send changes
+    this.previousPlayerPositions = new Map();
+    this.previousObjectPositions = new Map();
+    this.positionChangeThreshold = 0.001; // 1mm threshold for position changes
+    this.fullStateBroadcastCounter = 0;
+    this.fullStateBroadcastInterval = 20; // Send full state every 20 updates (1 second at 20Hz)
 
     // Callback for when player physics body is created
     this.onPlayerPhysicsCreated = null;
@@ -39,11 +46,8 @@ class HostManager {
     networkManager.on(MessageTypes.OBJECT_RELEASE, (data) => this.onObjectRelease(data));
     networkManager.on(MessageTypes.OBJECT_UPDATE, (data) => this.onObjectUpdate(data));
 
-    // Broadcast world state at 20Hz
+    // Broadcast world state at 20Hz (includes hand data - removed separate 30Hz broadcast)
     this.stateUpdateInterval = setInterval(() => this.broadcastWorldState(), 50);
-
-    // Broadcast hand tracking at 30Hz
-    this.handUpdateInterval = setInterval(() => this.broadcastHandTracking(), 33);
   }
 
   initializePhysics() {
@@ -416,34 +420,93 @@ class HostManager {
     this.vrHeadData = headData;
   }
 
+  setCameraTransform(transformData) {
+    this.cameraTransformData = transformData;
+  }
+
+  // Get stats for dashboard display
+  getHostStats() {
+    return {
+      playerCount: this.players.size,
+      objectCount: this.objects.size,
+      physicsBodyCount: this.physicsWorld?.bodies?.size || 0,
+      heldPlayerId: this.heldPlayerId,
+      hasVRHandData: this.vrHandData !== null,
+      hasVRHeadData: this.vrHeadData !== null
+    };
+  }
+
+  // Check if position changed significantly
+  _hasPositionChanged(prev, current) {
+    if (!prev || !current) return true;
+    const dx = Math.abs((prev.x || 0) - (current.x || 0));
+    const dy = Math.abs((prev.y || 0) - (current.y || 0));
+    const dz = Math.abs((prev.z || 0) - (current.z || 0));
+    return dx > this.positionChangeThreshold ||
+           dy > this.positionChangeThreshold ||
+           dz > this.positionChangeThreshold;
+  }
+
   broadcastWorldState() {
-    // Build player physics states
+    this.fullStateBroadcastCounter++;
+    const sendFullState = this.fullStateBroadcastCounter >= this.fullStateBroadcastInterval;
+    if (sendFullState) {
+      this.fullStateBroadcastCounter = 0;
+    }
+
+    // Build player physics states (only changed ones unless full broadcast)
     const playerPhysicsStates = [];
-    this.players.forEach((player, playerId) => {
+    this.players.forEach((_, playerId) => {
       const sm = this.playerStateMachines.get(playerId);
       const physics = this.playerPhysics.get(playerId);
 
       if (physics) {
         const physicsState = physics.getState();
-        playerPhysicsStates.push({
-          id: playerId,
-          state: sm ? sm.state : PlayerState.WALKING,
-          position: physicsState.position,
-          rotation: physicsState.rotation,
-          velocity: physicsState.velocity
-        });
+        const prevPos = this.previousPlayerPositions.get(playerId);
+        const hasChanged = sendFullState || this._hasPositionChanged(prevPos, physicsState.position);
+
+        if (hasChanged) {
+          playerPhysicsStates.push({
+            id: playerId,
+            state: sm ? sm.state : PlayerState.WALKING,
+            position: physicsState.position,
+            rotation: physicsState.rotation,
+            velocity: physicsState.velocity
+          });
+          this.previousPlayerPositions.set(playerId, { ...physicsState.position });
+        }
       }
     });
 
-    const state = {
-      type: MessageTypes.WORLD_STATE,
-      timestamp: Date.now(),
-      players: Array.from(this.players.values()),
-      objects: Array.from(this.objects.values()),
-      vrHead: this.vrHeadData,
-      playerPhysics: playerPhysicsStates
-    };
-    networkManager.broadcast(state);
+    // Filter objects to only include changed ones (unless full broadcast)
+    const changedObjects = [];
+    this.objects.forEach((obj, objId) => {
+      const prevPos = this.previousObjectPositions.get(objId);
+      const hasChanged = sendFullState || this._hasPositionChanged(prevPos, obj.position);
+
+      if (hasChanged) {
+        changedObjects.push(obj);
+        if (obj.position) {
+          this.previousObjectPositions.set(objId, { ...obj.position });
+        }
+      }
+    });
+
+    // Only broadcast if there are changes (or it's a full state broadcast)
+    if (sendFullState || playerPhysicsStates.length > 0 || changedObjects.length > 0) {
+      const state = {
+        type: MessageTypes.WORLD_STATE,
+        timestamp: Date.now(),
+        players: sendFullState ? Array.from(this.players.values()) : [],
+        objects: changedObjects,
+        vrHead: this.vrHeadData,
+        vrHands: this.vrHandData,
+        playerPhysics: playerPhysicsStates,
+        cameraTransform: this.cameraTransformData,
+        isFullState: sendFullState // Flag for clients to know if this is a full refresh
+      };
+      networkManager.broadcast(state);
+    }
   }
 
   broadcastHandTracking() {
@@ -460,9 +523,6 @@ class HostManager {
   cleanup() {
     if (this.stateUpdateInterval) {
       clearInterval(this.stateUpdateInterval);
-    }
-    if (this.handUpdateInterval) {
-      clearInterval(this.handUpdateInterval);
     }
 
     // Cleanup physics

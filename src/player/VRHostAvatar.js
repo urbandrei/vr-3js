@@ -95,7 +95,7 @@ export class VRHostAvatar {
       new THREE.BoxGeometry(0.2, 0.08, 0.05),
       new THREE.MeshStandardMaterial({ color: 0x333333 })
     );
-    visor.position.z = 0.1;
+    visor.position.z = -0.1;
     head.add(visor);
 
     return head;

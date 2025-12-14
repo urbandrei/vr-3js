@@ -112,6 +112,9 @@ export class CollisionHandler {
   }
 
   handleHandBlockCollision(handId, blockId, handBody, blockBody) {
+    // Validate parameters - handBody and blockBody are required
+    if (!handBody || !blockBody) return;
+
     // Parse hand ID to get handedness (new format: hand_left_thumb)
     const { handedness } = this.parseHandId(handId);
     const handIndex = handedness === 'left' ? 0 : 1;
@@ -128,9 +131,18 @@ export class CollisionHandler {
     const velocity = handPhysics.getVelocity();
     const speed = velocity.length();
 
+    // Validate velocity - skip if invalid
+    if (!isFinite(speed)) return;
+
     // Only apply impulse if hand is moving fast enough
     const minSpeed = 0.3; // 30cm/s minimum to knock a block
     if (speed < minSpeed) return;
+
+    // Clamp extreme velocities to prevent physics crashes
+    const MAX_HAND_SPEED = 20; // m/s
+    if (speed > MAX_HAND_SPEED) {
+      velocity.multiplyScalar(MAX_HAND_SPEED / speed);
+    }
 
     // Calculate impulse based on hand velocity and virtual mass
     const impulseMultiplier = PhysicsConfig.forces.impulseMultiplier;
@@ -140,12 +152,15 @@ export class CollisionHandler {
       velocity.z * handPhysics.virtualMass * impulseMultiplier
     );
 
+    // Validate impulse before applying
+    if (!isFinite(impulse.x) || !isFinite(impulse.y) || !isFinite(impulse.z)) return;
+
     // Apply impulse to block body at center of mass
     blockBody.applyImpulse(impulse, blockBody.position);
 
     // Add some angular velocity based on impact point relative to center
     // This makes the block spin realistically when hit off-center
-    const handPos = handPhysics.body.position;
+    const handPos = handBody.position;
     const blockPos = blockBody.position;
     const hitOffset = new CANNON.Vec3(
       handPos.x - blockPos.x,
@@ -156,7 +171,11 @@ export class CollisionHandler {
     // Cross product of hit offset and impulse gives torque direction
     const torque = hitOffset.cross(impulse);
     torque.scale(0.5, torque); // Reduce angular effect
-    blockBody.angularVelocity.vadd(torque, blockBody.angularVelocity);
+
+    // Validate torque before applying
+    if (isFinite(torque.x) && isFinite(torque.y) && isFinite(torque.z)) {
+      blockBody.angularVelocity.vadd(torque, blockBody.angularVelocity);
+    }
 
     // Wake up the body to ensure physics processes
     blockBody.wakeUp();
@@ -237,5 +256,17 @@ export class CollisionHandler {
     }, delayMs);
 
     this.pendingReenables.set(object, timeoutId);
+  }
+
+  // Cancel pending collision reenable (called when object is grabbed again)
+  cancelPendingReenable(object) {
+    if (this.pendingReenables.has(object)) {
+      clearTimeout(this.pendingReenables.get(object));
+      this.pendingReenables.delete(object);
+      // Re-enable hand collision immediately since object is being grabbed
+      if (object.enableHandCollision) {
+        object.enableHandCollision();
+      }
+    }
   }
 }

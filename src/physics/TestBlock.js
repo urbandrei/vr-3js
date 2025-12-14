@@ -16,34 +16,37 @@ export class TestBlock {
     this.startQuat = new THREE.Quaternion();
     this.targetQuat = new THREE.Quaternion();
 
-    // Create visual mesh (box matching physics dimensions)
     const config = PhysicsConfig.player;
-    const geometry = new THREE.BoxGeometry(config.width, config.height, config.depth);
-    const material = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
-    this.mesh = new THREE.Mesh(geometry, material);
 
-    // Position mesh so bottom is at y=0
-    this.mesh.position.copy(position);
-    this.mesh.position.y = position.y + config.height / 2;
+    // Calculate initial Y position (bottom at y=0)
+    const posY = (position.y || 0) + config.height / 2;
 
-    // Grabbable properties (same as player)
-    this.mesh.userData.grabbable = true;
-    this.mesh.userData.networkId = `block_${id}`;
-    this.mesh.userData.isPlayer = false;
-    this.mesh.userData.isTestBlock = true;
+    // Create visual mesh only if scene is provided (not headless mode)
+    if (scene) {
+      const geometry = new THREE.BoxGeometry(config.width, config.height, config.depth);
+      const material = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
+      this.mesh = new THREE.Mesh(geometry, material);
 
-    scene.add(this.mesh);
+      // Position mesh so bottom is at y=0
+      this.mesh.position.set(position.x, posY, position.z);
 
-    // Create physics body (same settings as player)
+      // Grabbable properties (same as player)
+      this.mesh.userData.grabbable = true;
+      this.mesh.userData.networkId = `block_${id}`;
+      this.mesh.userData.isPlayer = false;
+      this.mesh.userData.isTestBlock = true;
+
+      scene.add(this.mesh);
+    } else {
+      this.mesh = null; // Headless mode - no visual mesh
+    }
+
+    // Create physics body (always created)
     this.body = this.createPhysicsBody();
     physicsWorld.addBody(`block_${id}`, this.body);
 
     // Set initial position
-    this.body.position.set(
-      this.mesh.position.x,
-      this.mesh.position.y,
-      this.mesh.position.z
-    );
+    this.body.position.set(position.x, posY, position.z);
   }
 
   createPhysicsBody() {
@@ -116,13 +119,15 @@ export class TestBlock {
   }
 
   setPosition(x, y, z) {
-    this.mesh.position.set(x, y, z);
+    if (this.mesh) {
+      this.mesh.position.set(x, y, z);
+    }
     this.body.position.set(x, y, z);
   }
 
   // Sync visual mesh from physics body
   syncFromPhysics() {
-    if (!this.isHeld) {
+    if (!this.isHeld && this.mesh) {
       this.mesh.position.set(
         this.body.position.x,
         this.body.position.y,
@@ -139,7 +144,7 @@ export class TestBlock {
 
   // Sync physics body from visual mesh (when held)
   syncToPhysics() {
-    if (this.isHeld) {
+    if (this.isHeld && this.mesh) {
       this.body.position.set(
         this.mesh.position.x,
         this.mesh.position.y,
@@ -188,7 +193,9 @@ export class TestBlock {
       if (this.rightingProgress >= 1) {
         // Animation complete
         this.isRighting = false;
-        this.mesh.quaternion.copy(this.targetQuat);
+        if (this.mesh) {
+          this.mesh.quaternion.copy(this.targetQuat);
+        }
         this.body.quaternion.set(
           this.targetQuat.x,
           this.targetQuat.y,
@@ -203,12 +210,19 @@ export class TestBlock {
         this.body.wakeUp();
       } else {
         // Slerp toward upright
-        this.mesh.quaternion.slerpQuaternions(
-          this.startQuat,
-          this.targetQuat,
-          this.rightingProgress
-        );
-        this.syncToPhysics();
+        if (this.mesh) {
+          this.mesh.quaternion.slerpQuaternions(
+            this.startQuat,
+            this.targetQuat,
+            this.rightingProgress
+          );
+          this.syncToPhysics();
+        } else {
+          // Headless mode: interpolate quaternion directly on body
+          const q = new THREE.Quaternion();
+          q.slerpQuaternions(this.startQuat, this.targetQuat, this.rightingProgress);
+          this.body.quaternion.set(q.x, q.y, q.z, q.w);
+        }
       }
     } else {
       // Check if stable and tilted
@@ -228,7 +242,16 @@ export class TestBlock {
 
   // Get angle (degrees) between block's up vector and world up
   getTiltAngle() {
-    const blockUp = new THREE.Vector3(0, 1, 0).applyQuaternion(this.mesh.quaternion);
+    // Get quaternion from mesh or body
+    const quat = this.mesh
+      ? this.mesh.quaternion
+      : new THREE.Quaternion(
+          this.body.quaternion.x,
+          this.body.quaternion.y,
+          this.body.quaternion.z,
+          this.body.quaternion.w
+        );
+    const blockUp = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
     const worldUp = new THREE.Vector3(0, 1, 0);
     const dot = Math.max(-1, Math.min(1, blockUp.dot(worldUp))); // Clamp for safety
     return Math.acos(dot) * (180 / Math.PI);
@@ -238,10 +261,21 @@ export class TestBlock {
   startRighting() {
     this.isRighting = true;
     this.rightingProgress = 0;
-    this.startQuat.copy(this.mesh.quaternion);
+
+    // Get current quaternion from mesh or body
+    if (this.mesh) {
+      this.startQuat.copy(this.mesh.quaternion);
+    } else {
+      this.startQuat.set(
+        this.body.quaternion.x,
+        this.body.quaternion.y,
+        this.body.quaternion.z,
+        this.body.quaternion.w
+      );
+    }
 
     // Target: upright, but preserve Y rotation (facing direction)
-    const euler = new THREE.Euler().setFromQuaternion(this.mesh.quaternion, 'YXZ');
+    const euler = new THREE.Euler().setFromQuaternion(this.startQuat, 'YXZ');
     this.targetQuat.setFromEuler(new THREE.Euler(0, euler.y, 0, 'YXZ'));
 
     // Make physics body kinematic during animation to prevent fighting
@@ -251,9 +285,11 @@ export class TestBlock {
   }
 
   dispose() {
-    this.scene.remove(this.mesh);
-    this.mesh.geometry.dispose();
-    this.mesh.material.dispose();
+    if (this.mesh && this.scene) {
+      this.scene.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+    }
     this.physicsWorld.removeBody(`block_${this.id}`);
   }
 }
