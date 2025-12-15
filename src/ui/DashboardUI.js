@@ -1,13 +1,11 @@
 /**
- * Dashboard UI for the host - displays game state, players, physics stats, etc.
+ * Simplified Dashboard UI for the host - displays VR connection status
  */
 export class DashboardUI {
   constructor() {
     this.container = null;
     this.playersPanel = null;
-    this.physicsPanel = null;
     this.networkPanel = null;
-    this.objectsPanel = null;
     this.eventLog = null;
     this.errorLog = null;
 
@@ -22,37 +20,16 @@ export class DashboardUI {
       <div class="dashboard-header">
         <h1>VR Game Host Dashboard</h1>
         <div class="header-status">
-          <span id="dash-status" class="status-indicator status-waiting">Waiting for players...</span>
+          <span id="dash-room-code" class="room-code-display"></span>
+          <span id="dash-status" class="status-indicator status-waiting">Waiting for VR client...</span>
           <span id="dash-uptime">Uptime: 0:00</span>
         </div>
       </div>
 
       <div class="dashboard-grid">
         <div class="panel panel-players">
-          <h2>Players <span id="player-count">(0)</span></h2>
+          <h2>VR Client <span id="player-count">(0)</span></h2>
           <div id="players-list" class="panel-content"></div>
-        </div>
-
-        <div class="panel panel-physics">
-          <h2>Physics Stats</h2>
-          <div class="panel-content">
-            <div class="stat-row">
-              <span class="stat-label">Bodies:</span>
-              <span id="stat-bodies" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Step Time:</span>
-              <span id="stat-step-time" class="stat-value">0ms</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Collisions:</span>
-              <span id="stat-collisions" class="stat-value">0</span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">Update Rate:</span>
-              <span id="stat-update-rate" class="stat-value">0 Hz</span>
-            </div>
-          </div>
         </div>
 
         <div class="panel panel-network">
@@ -75,11 +52,6 @@ export class DashboardUI {
               <span id="stat-bandwidth" class="stat-value">0 KB/s</span>
             </div>
           </div>
-        </div>
-
-        <div class="panel panel-objects">
-          <h2>Objects <span id="object-count">(0)</span></h2>
-          <div id="objects-list" class="panel-content"></div>
         </div>
 
         <div class="panel panel-events">
@@ -153,12 +125,21 @@ export class DashboardUI {
         color: #888;
       }
 
+      .room-code-display {
+        background: #1a4a1a;
+        color: #4ade80;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 3px;
+      }
+
       .dashboard-grid {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        grid-template-rows: auto auto;
+        grid-template-columns: repeat(2, 1fr);
         gap: 15px;
-        max-width: 1400px;
+        max-width: 1000px;
       }
 
       .panel {
@@ -191,10 +172,6 @@ export class DashboardUI {
         overflow-y: auto;
       }
 
-      .panel-events, .panel-errors {
-        grid-column: span 1;
-      }
-
       .stat-row {
         display: flex;
         justify-content: space-between;
@@ -215,7 +192,7 @@ export class DashboardUI {
         color: #4ade80;
       }
 
-      .player-item, .object-item {
+      .player-item {
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -236,45 +213,8 @@ export class DashboardUI {
         font-size: 10px;
         font-weight: 600;
         text-transform: uppercase;
-      }
-
-      .player-type.vr {
         background: #5b21b6;
         color: #c4b5fd;
-      }
-
-      .player-type.pc {
-        background: #1e40af;
-        color: #93c5fd;
-      }
-
-      .player-item .player-pos {
-        color: #666;
-        font-size: 11px;
-      }
-
-      .player-item .player-state {
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 10px;
-      }
-
-      .state-walking { background: #065f46; color: #6ee7b7; }
-      .state-held { background: #7c2d12; color: #fdba74; }
-      .state-ragdoll { background: #7f1d1d; color: #fca5a5; }
-      .state-recovering { background: #713f12; color: #fcd34d; }
-
-      .object-item .object-id {
-        font-weight: 500;
-      }
-
-      .object-item .object-status {
-        color: #666;
-        font-size: 11px;
-      }
-
-      .object-status.held {
-        color: #fbbf24;
       }
 
       .log-content {
@@ -322,13 +262,11 @@ export class DashboardUI {
     document.body.appendChild(this.container);
 
     this.playersPanel = document.getElementById('players-list');
-    this.objectsPanel = document.getElementById('objects-list');
     this.eventLog = document.getElementById('event-log');
     this.errorLog = document.getElementById('error-log');
 
     // Initialize empty states
-    this.playersPanel.innerHTML = '<div class="empty-state">No players connected</div>';
-    this.objectsPanel.innerHTML = '<div class="empty-state">No objects</div>';
+    this.playersPanel.innerHTML = '<div class="empty-state">No VR client connected</div>';
     this.eventLog.innerHTML = '<div class="empty-state">No events yet</div>';
     this.errorLog.innerHTML = '<div class="empty-state">No errors</div>';
   }
@@ -337,67 +275,26 @@ export class DashboardUI {
     document.getElementById('player-count').textContent = `(${players.size})`;
 
     if (players.size === 0) {
-      this.playersPanel.innerHTML = '<div class="empty-state">No players connected</div>';
-      document.getElementById('dash-status').textContent = 'Waiting for players...';
+      this.playersPanel.innerHTML = '<div class="empty-state">No VR client connected</div>';
+      document.getElementById('dash-status').textContent = 'Waiting for VR client...';
       document.getElementById('dash-status').className = 'status-indicator status-waiting';
       return;
     }
 
-    document.getElementById('dash-status').textContent = 'Active';
+    document.getElementById('dash-status').textContent = 'VR Connected';
     document.getElementById('dash-status').className = 'status-indicator status-active';
 
     let html = '';
     players.forEach((player, playerId) => {
-      const isVR = playerId === vrClientId;
-      const type = isVR ? 'vr' : 'pc';
-      const pos = player.position || { x: 0, y: 0, z: 0 };
-      const state = player.state || 'walking';
-
       html += `
         <div class="player-item">
-          <div>
-            <span class="player-id">${playerId.substring(0, 12)}</span>
-            <span class="player-type ${type}">${type}</span>
-          </div>
-          <span class="player-pos">(${pos.x?.toFixed(2) || 0}, ${pos.y?.toFixed(2) || 0}, ${pos.z?.toFixed(2) || 0})</span>
-          <span class="player-state state-${state}">${state}</span>
+          <span class="player-id">${playerId.substring(0, 12)}</span>
+          <span class="player-type">VR</span>
         </div>
       `;
     });
 
     this.playersPanel.innerHTML = html;
-  }
-
-  updateObjects(objects) {
-    document.getElementById('object-count').textContent = `(${objects.size})`;
-
-    if (objects.size === 0) {
-      this.objectsPanel.innerHTML = '<div class="empty-state">No objects</div>';
-      return;
-    }
-
-    let html = '';
-    objects.forEach((obj, objId) => {
-      const heldBy = obj.heldBy;
-      const status = heldBy ? `held: ${heldBy.substring(0, 8)}` : 'free';
-      const statusClass = heldBy ? 'held' : '';
-
-      html += `
-        <div class="object-item">
-          <span class="object-id">${objId}</span>
-          <span class="object-status ${statusClass}">${status}</span>
-        </div>
-      `;
-    });
-
-    this.objectsPanel.innerHTML = html;
-  }
-
-  updatePhysicsStats(stats) {
-    document.getElementById('stat-bodies').textContent = stats.bodyCount || 0;
-    document.getElementById('stat-step-time').textContent = `${(stats.stepTime || 0).toFixed(2)}ms`;
-    document.getElementById('stat-collisions').textContent = stats.collisionCount || 0;
-    document.getElementById('stat-update-rate').textContent = `${stats.updateRate || 0} Hz`;
   }
 
   updateNetworkStats(stats) {
@@ -456,6 +353,13 @@ export class DashboardUI {
     // Limit entries
     while (container.children.length > this.maxLogEntries) {
       container.removeChild(container.lastChild);
+    }
+  }
+
+  setRoomCode(code) {
+    const el = document.getElementById('dash-room-code');
+    if (el) {
+      el.textContent = `Room: ${code}`;
     }
   }
 

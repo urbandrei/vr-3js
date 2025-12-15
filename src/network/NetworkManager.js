@@ -1,15 +1,18 @@
 import Peer from 'peerjs';
 import { MessageTypes } from './MessageTypes.js';
 
-// Fixed host ID - only one VR host at a time
-const FIXED_HOST_ID = 'vr-game-host';
-const CONNECTION_TIMEOUT = 10000; // 10 seconds
+const CONNECTION_TIMEOUT = 15000; // 15 seconds
+
+// Generate a random 6-character room code
+function generateRoomCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
 
 // Player types
 export const PlayerType = {
   DASHBOARD: 'dashboard',
   VR: 'vr',
-  PC: 'pc'
+  CAMERA: 'camera'
 };
 
 class NetworkManager {
@@ -64,8 +67,8 @@ class NetworkManager {
   }
 
   async createRoom() {
-    this.roomCode = FIXED_HOST_ID;
-    this.peer = new Peer(FIXED_HOST_ID);
+    this.roomCode = generateRoomCode();
+    this.peer = new Peer(this.roomCode, PEER_CONFIG);
     this.playerType = PlayerType.DASHBOARD;
 
     return new Promise((resolve, reject) => {
@@ -85,94 +88,100 @@ class NetworkManager {
     });
   }
 
-  // Alias for backwards compatibility
-  async createDashboardRoom() {
-    return this.createRoom();
-  }
+  // Shared connection logic for all client types with retry support
+  async _joinAsClient(roomCode, playerType, joinMessageType, retryCount = 0) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000;
 
-  async joinRoom() {
-    this.roomCode = FIXED_HOST_ID;
-    this.peer = new Peer();
-    this.playerType = PlayerType.PC;
+    if (!roomCode) {
+      throw new Error('Room code is required');
+    }
 
-    const connectionPromise = new Promise((resolve, reject) => {
-      this.peer.on('open', (id) => {
-        this.playerId = id;
-        console.log('Connecting to host as PC client...');
+    // Clean up any existing peer before creating new one
+    if (this.peer) {
+      this.peer.destroy();
+      this.peer = null;
+    }
 
-        this.hostConnection = this.peer.connect(FIXED_HOST_ID, { reliable: true });
-
-        this.hostConnection.on('open', () => {
-          console.log('Connected to host');
-          this.setupClientConnection(this.hostConnection);
-          resolve();
-        });
-
-        this.hostConnection.on('error', (err) => {
-          console.error('Connection error:', err);
-          reject(err);
-        });
-      });
-
-      this.peer.on('error', (err) => {
-        console.error('PeerJS error:', err);
-        reject(err);
-      });
-    });
-
-    return this._withTimeout(
-      connectionPromise,
-      CONNECTION_TIMEOUT,
-      'Connection timeout - host may not be available'
-    );
-  }
-
-  async joinAsVRClient() {
-    this.roomCode = FIXED_HOST_ID;
-    this.peer = new Peer();
-    this.playerType = PlayerType.VR;
+    this.roomCode = roomCode.toUpperCase();
+    this.peer = new Peer(PEER_CONFIG);
+    this.playerType = playerType;
 
     const connectionPromise = new Promise((resolve, reject) => {
       this.peer.on('open', (id) => {
         this.playerId = id;
-        console.log('Connecting to host as VR client...');
+        console.log(`[${playerType}] Peer opened with ID:`, id);
+        console.log(`[${playerType}] Attempting to connect to room:`, this.roomCode);
 
-        this.hostConnection = this.peer.connect(FIXED_HOST_ID, { reliable: true });
+        this.hostConnection = this.peer.connect(this.roomCode, { reliable: true });
 
         this.hostConnection.on('open', () => {
-          console.log('Connected to host as VR');
+          console.log(`[${playerType}] Connection opened to host`);
           this.setupClientConnection(this.hostConnection);
-          // Notify host that this is the VR client
+          // Notify host of this client type
           this.sendToHost({
-            type: MessageTypes.VR_CLIENT_JOIN,
+            type: joinMessageType,
             playerId: this.playerId
           });
           resolve();
         });
 
         this.hostConnection.on('error', (err) => {
-          console.error('Connection error:', err);
+          console.error(`[${playerType}] Connection error:`, err);
           reject(err);
+        });
+
+        this.hostConnection.on('close', () => {
+          console.log(`[${playerType}] Connection closed before opening`);
+          reject(new Error('Connection closed before opening'));
         });
       });
 
       this.peer.on('error', (err) => {
-        console.error('PeerJS error:', err);
-        reject(err);
+        console.error(`[${playerType}] PeerJS error:`, err.type, err);
+        if (err.type === 'peer-unavailable') {
+          reject(new Error('Host not found - make sure Dashboard Host is running'));
+        } else {
+          reject(err);
+        }
       });
     });
 
-    return this._withTimeout(
-      connectionPromise,
-      CONNECTION_TIMEOUT,
-      'Connection timeout - host may not be available'
-    );
+    try {
+      return await this._withTimeout(
+        connectionPromise,
+        CONNECTION_TIMEOUT,
+        'Connection timeout - host may not be available'
+      );
+    } catch (err) {
+      // Retry on negotiation failure
+      const isNegotiationError = err.message?.includes('Negotiation') ||
+                                  err.message?.includes('negotiation') ||
+                                  err.type === 'negotiation-failed';
+
+      if (retryCount < MAX_RETRIES && isNegotiationError) {
+        console.log(`[${playerType}] Connection failed, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY));
+        return this._joinAsClient(roomCode, playerType, joinMessageType, retryCount + 1);
+      }
+      throw err;
+    }
+  }
+
+  async joinAsVRClient(roomCode) {
+    return this._joinAsClient(roomCode, PlayerType.VR, MessageTypes.VR_CLIENT_JOIN);
+  }
+
+  async joinAsCamera(roomCode) {
+    return this._joinAsClient(roomCode, PlayerType.CAMERA, MessageTypes.CAMERA_JOIN);
   }
 
   handleNewConnection(conn) {
-    console.log('New player connected:', conn.peer);
+    console.log('[Host] New connection attempt from:', conn.peer);
+    console.log('[Host] Connection state:', conn.open ? 'open' : 'pending');
 
     conn.on('open', () => {
+      console.log('[Host] Connection OPENED with:', conn.peer);
       this.connections.set(conn.peer, conn);
 
       conn.on('data', (data) => {
@@ -180,12 +189,20 @@ class NetworkManager {
       });
 
       conn.on('close', () => {
-        console.log('Player disconnected:', conn.peer);
+        console.log('[Host] Player disconnected:', conn.peer);
         this.connections.delete(conn.peer);
         this.emit(MessageTypes.PLAYER_LEAVE, { playerId: conn.peer });
       });
 
       this.emit(MessageTypes.PLAYER_JOIN, { playerId: conn.peer });
+    });
+
+    conn.on('error', (err) => {
+      console.error('[Host] Connection ERROR with peer:', conn.peer, err);
+    });
+
+    conn.on('close', () => {
+      console.log('[Host] Connection CLOSED with peer (before open):', conn.peer);
     });
   }
 
@@ -233,6 +250,27 @@ class NetworkManager {
     return this._safeSend(conn, message);
   }
 
+  sendToVRClient(message) {
+    if (!this.vrClientId) return;
+    const conn = this.connections.get(this.vrClientId);
+    this._safeSend(conn, message);
+  }
+
+  sendToCameraClients(message) {
+    const data = this._safeStringify(message);
+    if (!data) return;
+
+    this.connections.forEach((conn, playerId) => {
+      if (this.playerTypes.get(playerId) === PlayerType.CAMERA && conn?.open) {
+        try {
+          conn.send(data);
+        } catch (e) {
+          console.warn('Failed to send to camera client:', e);
+        }
+      }
+    });
+  }
+
   on(eventType, handler) {
     if (!this.eventHandlers.has(eventType)) {
       this.eventHandlers.set(eventType, []);
@@ -273,7 +311,7 @@ class NetworkManager {
   }
 
   getPlayerType(playerId) {
-    return this.playerTypes.get(playerId) || PlayerType.PC;
+    return this.playerTypes.get(playerId) || PlayerType.VR;
   }
 
   getVRClientId() {

@@ -2,7 +2,6 @@ import { networkManager } from './network/NetworkManager.js';
 import { LobbyUI } from './ui/LobbyUI.js';
 import { DashboardHost } from './game/DashboardHost.js';
 import { VRClientGame } from './game/VRClientGame.js';
-import { ClientGame } from './game/ClientGame.js';
 
 /**
  * Main entry point - handles lobby and game mode switching
@@ -11,7 +10,6 @@ import { ClientGame } from './game/ClientGame.js';
 let lobbyUI;
 let dashboardHost;
 let vrClientGame;
-let clientGame;
 
 function initLobby() {
   lobbyUI = new LobbyUI();
@@ -29,9 +27,14 @@ function initLobby() {
 
   // Join as VR client
   lobbyUI.onJoinAsVR = async () => {
+    const roomCode = lobbyUI.getRoomCodeInput();
+    if (!roomCode) {
+      lobbyUI.setStatus('Please enter a room code');
+      return;
+    }
     try {
-      lobbyUI.setStatus('Connecting to host as VR...');
-      await networkManager.joinAsVRClient();
+      lobbyUI.setStatus(`Connecting to room ${roomCode}...`);
+      await networkManager.joinAsVRClient(roomCode);
       lobbyUI.setStatus('Connected! Starting VR...');
       startVRClientGame();
     } catch (err) {
@@ -40,18 +43,6 @@ function initLobby() {
     }
   };
 
-  // Join as PC client
-  lobbyUI.onJoinGame = async () => {
-    try {
-      lobbyUI.setStatus('Connecting to host...');
-      await networkManager.joinRoom();
-      lobbyUI.setStatus('Connected! Starting game...');
-      startClientGame();
-    } catch (err) {
-      console.error('Failed to join:', err);
-      lobbyUI.setStatus('Failed to join: ' + (err.message || 'Unknown error'));
-    }
-  };
 }
 
 async function startDashboardHost() {
@@ -73,17 +64,6 @@ async function startVRClientGame() {
     console.error('Failed to start VR client:', err);
     lobbyUI.show();
     lobbyUI.setStatus('Failed to start VR: ' + (err.message || 'Unknown error'));
-  }
-}
-
-function startClientGame() {
-  try {
-    clientGame = new ClientGame(lobbyUI);
-    clientGame.start();
-  } catch (err) {
-    console.error('Failed to start client game:', err);
-    lobbyUI.show();
-    lobbyUI.setStatus('Failed to start: ' + (err.message || 'Unknown error'));
   }
 }
 

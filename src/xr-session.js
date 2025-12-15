@@ -1,22 +1,25 @@
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
-export function setupXRSession(renderer, scene) {
+export function setupXRSession(renderer, scene, showDefaultHands = true) {
   const handModelFactory = new XRHandModelFactory();
   const hands = [];
+  const handModels = [];
 
   // Set up both hands (0 = left, 1 = right)
   for (let i = 0; i < 2; i++) {
     const hand = renderer.xr.getHand(i);
     scene.add(hand);
 
-    // Add visual hand model
+    // Add visual hand model (can be hidden later)
     const handModel = handModelFactory.createHandModel(hand, 'mesh');
+    handModel.visible = showDefaultHands;
     hand.add(handModel);
 
     hands.push(hand);
+    handModels.push(handModel);
   }
 
-  return hands;
+  return { hands, handModels };
 }
 
 export function createVRButton(renderer) {

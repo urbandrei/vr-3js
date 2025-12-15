@@ -4,16 +4,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "dev:local": "concurrently \"peerjs --port 9000\" \"vite --host\"",
+    "peer-server": "peerjs --port 9000",
     "build": "vite build",
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "cannon-es": "^0.20.0",
     "peerjs": "^1.5.5",
     "three": "^0.170.0"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.2.0",
+    "peer": "^1.0.2",
     "vite": "^6.0.0"
   }
 }

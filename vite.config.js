@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'path';
 
 // Plugin to receive debug logs from the browser and print to terminal
 function debugLogPlugin() {
@@ -40,8 +41,8 @@ export default defineConfig({
     assetsDir: 'assets',
     rollupOptions: {
       input: {
-        main: 'index.html',
-        camera: 'camera.html'
+        main: resolve(__dirname, 'index.html'),
+        camera: resolve(__dirname, 'camera.html')
       }
     }
   }

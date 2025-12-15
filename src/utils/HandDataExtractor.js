@@ -1,6 +1,6 @@
 // Hand tracking data extraction utilities
 
-// Extract lightweight hand data for network transmission (fingertips only)
+// Extract full hand data for network transmission (all 25 joints for physics)
 export function extractHandData(handTrackers) {
   if (!handTrackers || !Array.isArray(handTrackers)) {
     return null;
@@ -8,13 +8,13 @@ export function extractHandData(handTrackers) {
 
   const handData = {};
 
-  // Use getEssentialJointData for network (5 fingertips vs 25 joints = 80% reduction)
+  // Send all 25 joints for physics collision bodies
   if (handTrackers[0]?.hasValidData?.()) {
-    handData.left = handTrackers[0].getEssentialJointData();
+    handData.left = handTrackers[0].getJointData();
   }
 
   if (handTrackers[1]?.hasValidData?.()) {
-    handData.right = handTrackers[1].getEssentialJointData();
+    handData.right = handTrackers[1].getJointData();
   }
 
   return Object.keys(handData).length > 0 ? handData : null;

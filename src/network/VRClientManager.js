@@ -2,24 +2,13 @@ import { networkManager } from './NetworkManager.js';
 import { MessageTypes } from './MessageTypes.js';
 
 /**
- * Network manager for VR client - handles VR-specific high-frequency updates
+ * Simplified VR Client Manager - sends hand/head tracking to host
+ * No grabbing, no object/player tracking
  */
 class VRClientManager {
   constructor() {
-    this.players = new Map();
-    this.objects = new Map();
     this.localHandData = null;
     this.localHeadData = null;
-
-    // Callbacks for game state updates
-    this.onPlayersUpdated = null;
-    this.onObjectsUpdated = null;
-    this.onGrabResponse = null;
-
-    // Physics callbacks
-    this.onPlayerPhysicsUpdated = null;
-    this.onRagdollTriggered = null;
-    this.onRagdollRecovery = null;
 
     // Intervals for high-frequency updates
     this.handUpdateInterval = null;
@@ -30,77 +19,20 @@ class VRClientManager {
     this.movementThreshold = 0.002; // 2mm threshold for hand movement
     this.forceUpdateCounter = 0;
     this.forceUpdateInterval = 10; // Force update every 10 ticks (~333ms at 30Hz)
+
+    // Camera updates
+    this.lastCameraUpdate = 0;
+    this.cameraUpdateInterval = 50; // 20Hz
   }
 
   initialize() {
-    networkManager.on('initial_state', (data) => this.onInitialState(data));
-    networkManager.on(MessageTypes.WORLD_STATE, (data) => this.onWorldState(data));
-    networkManager.on(MessageTypes.GRAB_RESPONSE, (data) => this.handleGrabResponse(data));
-    networkManager.on(MessageTypes.RAGDOLL_TRIGGERED, (data) => this.handleRagdollTriggered(data));
-    networkManager.on(MessageTypes.RAGDOLL_RECOVERY, (data) => this.handleRagdollRecovery(data));
     networkManager.on('disconnected', () => this.onDisconnected());
 
-    // Send hand tracking at 30Hz (33ms) - reduced from 60Hz for performance
+    // Send hand tracking at 30Hz (33ms)
     this.handUpdateInterval = setInterval(() => this.sendHandTracking(), 33);
 
     // Send head tracking at 30Hz (33ms)
     this.headUpdateInterval = setInterval(() => this.sendHeadTracking(), 33);
-  }
-
-  onInitialState(data) {
-    console.log('VR Client received initial state');
-    data.players.forEach(p => this.players.set(p.id, p));
-    data.objects.forEach(o => this.objects.set(o.id, o));
-
-    if (this.onPlayersUpdated) this.onPlayersUpdated(this.players);
-    if (this.onObjectsUpdated) this.onObjectsUpdated(this.objects);
-  }
-
-  onWorldState(data) {
-    // Handle full state vs delta updates
-    if (data.isFullState) {
-      // Full state: clear and rebuild
-      this.players.clear();
-      data.players.forEach(p => {
-        this.players.set(p.id, p);
-      });
-
-      this.objects.clear();
-      data.objects.forEach(o => this.objects.set(o.id, o));
-    } else {
-      // Delta update: merge changes
-      data.players?.forEach(p => {
-        this.players.set(p.id, p);
-      });
-
-      data.objects?.forEach(o => this.objects.set(o.id, o));
-    }
-
-    if (this.onPlayersUpdated) this.onPlayersUpdated(this.players);
-    if (this.onObjectsUpdated) this.onObjectsUpdated(this.objects);
-
-    // Handle player physics states
-    if (data.playerPhysics && this.onPlayerPhysicsUpdated) {
-      this.onPlayerPhysicsUpdated(data.playerPhysics);
-    }
-  }
-
-  handleGrabResponse(data) {
-    if (this.onGrabResponse) {
-      this.onGrabResponse(data.objectId, data.granted, data.handIndex);
-    }
-  }
-
-  handleRagdollTriggered(data) {
-    if (this.onRagdollTriggered) {
-      this.onRagdollTriggered(data);
-    }
-  }
-
-  handleRagdollRecovery(data) {
-    if (this.onRagdollRecovery) {
-      this.onRagdollRecovery(data);
-    }
   }
 
   onDisconnected() {
@@ -177,43 +109,16 @@ class VRClientManager {
     });
   }
 
-  // Request to grab an object (VR can grab players too)
-  requestGrab(objectId, handIndex) {
+  sendCameraUpdate(transform) {
+    const now = Date.now();
+    if (now - this.lastCameraUpdate < this.cameraUpdateInterval) return;
+    this.lastCameraUpdate = now;
+
     networkManager.sendToHost({
-      type: MessageTypes.VR_GRAB_REQUEST,
-      objectId,
-      handIndex
+      type: MessageTypes.CAMERA_UPDATE,
+      camera: transform,
+      timestamp: now
     });
-  }
-
-  // Release an object
-  releaseObject(objectId, position, velocity, angularVelocity, handIndex) {
-    networkManager.sendToHost({
-      type: MessageTypes.VR_RELEASE,
-      objectId,
-      position,
-      velocity,
-      angularVelocity,
-      handIndex
-    });
-  }
-
-  // Update position of a grabbed object
-  sendObjectUpdate(objectId, position, rotation) {
-    networkManager.sendToHost({
-      type: MessageTypes.OBJECT_UPDATE,
-      objectId,
-      position,
-      rotation
-    });
-  }
-
-  getPlayers() {
-    return this.players;
-  }
-
-  getObjects() {
-    return this.objects;
   }
 
   cleanup() {

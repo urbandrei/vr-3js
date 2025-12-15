@@ -4,29 +4,14 @@ export const MessageTypes = {
   PLAYER_LEAVE: 'player_leave',
 
   // State sync
-  PLAYER_STATE: 'player_state',
   WORLD_STATE: 'world_state',
-  HAND_TRACKING: 'hand_tracking',
 
-  // Interactions
-  GRAB_REQUEST: 'grab_request',
-  GRAB_RESPONSE: 'grab_response',
-  OBJECT_RELEASE: 'object_release',
-  OBJECT_UPDATE: 'object_update',
-
-  // Player pickup (VR picks up PC player)
-  PLAYER_PICKUP: 'player_pickup',
-  PLAYER_RELEASE: 'player_release',
-  PLAYER_POSITION: 'player_position',
-
-  // Physics sync
-  RAGDOLL_TRIGGERED: 'ragdoll_triggered',
-  RAGDOLL_RECOVERY: 'ragdoll_recovery',
-
-  // VR Client -> Host (VR player as client)
+  // VR Client -> Host
   VR_CLIENT_JOIN: 'vr_client_join',
   VR_HAND_TRACKING: 'vr_hand_tracking',
   VR_HEAD_TRACKING: 'vr_head_tracking',
-  VR_GRAB_REQUEST: 'vr_grab_request',
-  VR_RELEASE: 'vr_release'
+
+  // Camera
+  CAMERA_JOIN: 'camera_join',
+  CAMERA_UPDATE: 'camera_update'
 };

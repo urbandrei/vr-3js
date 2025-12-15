@@ -5,9 +5,6 @@ export class LobbyUI {
     this.statusText = null;
     this.playerList = null;
 
-    this.onHostGame = null;
-    this.onJoinGame = null;
-    this.onEnterVR = null;
     this.onHostDashboard = null;
     this.onJoinAsVR = null;
 
@@ -30,12 +27,8 @@ export class LobbyUI {
 
         <div class="lobby-section">
           <h2>Join as VR Player</h2>
+          <input type="text" id="room-code-input" class="room-code-input" placeholder="Enter room code" maxlength="6" />
           <button id="join-vr-btn" class="btn btn-vr">Join as VR</button>
-        </div>
-
-        <div class="lobby-section">
-          <h2>Join as PC Player</h2>
-          <button id="join-btn" class="btn btn-secondary">Join as PC</button>
         </div>
 
         <div id="status" class="status"></div>
@@ -153,6 +146,32 @@ export class LobbyUI {
         color: #4ade80;
       }
 
+      .room-code-input {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        color: white;
+        font-size: 18px;
+        text-align: center;
+        text-transform: uppercase;
+        letter-spacing: 4px;
+        margin-bottom: 10px;
+        box-sizing: border-box;
+      }
+
+      .room-code-input::placeholder {
+        color: #666;
+        text-transform: none;
+        letter-spacing: normal;
+      }
+
+      .room-code-input:focus {
+        outline: none;
+        border-color: #f093fb;
+      }
+
       .status {
         text-align: center;
         padding: 10px;
@@ -223,16 +242,23 @@ export class LobbyUI {
     document.getElementById('join-vr-btn').addEventListener('click', () => {
       if (this.onJoinAsVR) this.onJoinAsVR();
     });
-
-    document.getElementById('join-btn').addEventListener('click', () => {
-      if (this.onJoinGame) this.onJoinGame();
-    });
   }
 
   showRoomCode(code) {
-    // Room code display is no longer used in new UI
-    // but keep method for backwards compatibility
+    // Display the room code prominently
+    const hostSection = this.container.querySelector('.lobby-section');
+    if (hostSection) {
+      const roomCodeDiv = document.createElement('div');
+      roomCodeDiv.className = 'room-code';
+      roomCodeDiv.innerHTML = `Room Code:<strong>${code}</strong>`;
+      hostSection.appendChild(roomCodeDiv);
+    }
     console.log('Room code:', code);
+  }
+
+  getRoomCodeInput() {
+    const input = document.getElementById('room-code-input');
+    return input ? input.value.trim().toUpperCase() : '';
   }
 
   setStatus(message) {

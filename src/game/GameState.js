@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * Centralized game state container
- * Replaces scattered global variables in main.js
+ * Simplified game state container
  */
 class GameState {
   constructor() {
@@ -11,7 +10,7 @@ class GameState {
 
   reset() {
     // Game mode
-    this.mode = null; // 'host' | 'client' | null
+    this.mode = null; // 'host' | 'vr-client' | null
     this.isInGame = false;
 
     // Core Three.js objects
@@ -20,33 +19,12 @@ class GameState {
     this.scene = null;
     this.clock = null;
 
-    // Game objects
-    this.grabbables = [];
-    this.testBlocks = [];
-    this.remotePlayers = new Map();
-    this.placeableCamera = null;
-
-    // VR Host specific
+    // VR specific
     this.handTrackers = [];
-    this.grabSystem = null;
-    this.grabHandler = null;
-
-    // PC Client specific
-    this.localPlayer = null;
-    this.pcGrabSystem = null;
-    this.vrHostAvatar = null;
 
     // UI
     this.lobbyUI = null;
     this.gameHUD = null;
-  }
-
-  isHost() {
-    return this.mode === 'host';
-  }
-
-  isClient() {
-    return this.mode === 'client';
   }
 
   setMode(mode) {
@@ -54,41 +32,10 @@ class GameState {
     this.isInGame = mode !== null;
   }
 
-  // Cleanup methods
-  disposeRemotePlayers() {
-    this.remotePlayers.forEach(player => {
-      if (player.dispose) player.dispose();
-    });
-    this.remotePlayers.clear();
-  }
-
-  disposeTestBlocks() {
-    this.testBlocks.forEach(block => {
-      if (block.dispose) block.dispose();
-    });
-    this.testBlocks = [];
-  }
-
   dispose() {
-    this.disposeRemotePlayers();
-    this.disposeTestBlocks();
-
-    if (this.placeableCamera?.dispose) {
-      this.placeableCamera.dispose();
-    }
-
-    if (this.localPlayer?.dispose) {
-      this.localPlayer.dispose();
-    }
-
-    if (this.vrHostAvatar?.dispose) {
-      this.vrHostAvatar.dispose();
-    }
-
     if (this.renderer) {
       this.renderer.dispose();
     }
-
     this.reset();
   }
 }
